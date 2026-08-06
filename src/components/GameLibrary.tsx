@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { SearchIcon } from "lucide-react";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
 import { PlaytimePanorama } from "@/components/PlaytimePanorama";
@@ -39,10 +39,13 @@ function GameCard({
     () => expandedArtCandidates(game.appId, "library", artwork),
     [game.appId, artwork],
   );
+  const candidateKey = candidates.join("\0");
   const [srcIdx, setSrcIdx] = useState(0);
-  useEffect(() => {
+  const [seenKey, setSeenKey] = useState(candidateKey);
+  if (seenKey !== candidateKey) {
+    setSeenKey(candidateKey);
     setSrcIdx(0);
-  }, [candidates]);
+  }
   const imgFailed = srcIdx >= candidates.length;
   const pct =
     maxHours > 0 ? Math.min(100, (game.hoursForever / maxHours) * 100) : 0;
@@ -87,7 +90,7 @@ function GameCard({
             <div className="game-card-last">Last {game.lastPlayedText}</div>
           ) : null}
           <div className="game-card-bar" aria-hidden>
-            <span style={{ width: `${pct}%` }} />
+            <span style={{ ["--fill" as string]: pct / 100 }} />
           </div>
         </div>
       </div>
@@ -98,11 +101,7 @@ function GameCard({
           <Badge variant="outline">
             {formatPlayHours(game.hours2Weeks)}h recent
           </Badge>
-        ) : (
-          <Badge variant="outline" className="text-muted-foreground">
-            Lifetime
-          </Badge>
-        )}
+        ) : null}
       </div>
     </a>
   );
@@ -141,6 +140,8 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
 
   const maxHours = playtime.games[0]?.hoursForever || 1;
   const featured = playtime.games[0];
+  const partialLibrary =
+    !meta.hasSteamApiKey && playtime.source === "account-data-html";
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -166,8 +167,68 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
 
   return (
     <div className="flex flex-col gap-5">
-      {featured ? (
-        <section className="library-hero">
+      <div className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-border/70 bg-card/50 px-4 py-3">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-lg font-semibold tracking-tight">
+            Your library shelf
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            {view === "panorama"
+              ? "Playtime panorama · capsules sized by hours (30m+)"
+              : `${filtered.length} titles · sorted like a Steam collection wall`}
+            {!meta.hasSteamApiKey
+              ? " · from Account Data games page"
+              : ` · ${playtime.source}`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {view !== "panorama" ? (
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-8 w-48 pl-8 md:w-56"
+                placeholder="Search games…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+          ) : null}
+          <ToggleGroup
+            value={[view]}
+            onValueChange={(next) => {
+              const v = next[0] as LibraryView | undefined;
+              if (v) setView(v);
+            }}
+            variant="outline"
+            size="sm"
+            spacing={0}
+            aria-label="Library view"
+          >
+            <ToggleGroupItem value="hours">Hours</ToggleGroupItem>
+            <ToggleGroupItem value="recent">Recent</ToggleGroupItem>
+            <ToggleGroupItem value="name">A–Z</ToggleGroupItem>
+            <ToggleGroupItem value="panorama">Panorama</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      </div>
+
+      {partialLibrary ? (
+        <Alert>
+          <AlertDescription>
+            Showing {playtime.games.length} titles from the games page snapshot
+            (often ~25). For your full library, run{" "}
+            <code className="font-mono text-primary">
+              npm run fetch:owned-games
+            </code>{" "}
+            after a Steam login session, or add{" "}
+            <code className="font-mono text-primary">STEAM_API_KEY</code> to{" "}
+            <code className="font-mono text-primary">.env.local</code>.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {featured && view !== "panorama" ? (
+        <section className="library-hero library-hero-compact">
           <HeroBanner
             appId={featured.appId}
             artwork={artwork}
@@ -176,7 +237,6 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
           />
           <div className="library-hero-veil" />
           <div className="library-hero-content">
-            <p className="library-hero-kicker">Most played</p>
             <h2 className="library-hero-title">{featured.name}</h2>
             <div className="library-hero-stats">
               <div>
@@ -236,51 +296,6 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
         </section>
       ) : null}
 
-      <div className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-border/70 bg-card/50 px-4 py-3">
-        <div className="flex flex-col gap-1">
-          <h3 className="text-lg font-semibold tracking-tight">
-            Your library shelf
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {view === "panorama"
-              ? "Playtime panorama · capsules sized by hours (30m+)"
-              : `${filtered.length} titles · sorted like a Steam collection wall`}
-            {!meta.hasSteamApiKey
-              ? " · from Account Data games page"
-              : ` · ${playtime.source}`}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {view !== "panorama" ? (
-            <div className="relative">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="h-8 w-48 pl-8 md:w-56"
-                placeholder="Search games…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
-          ) : null}
-          <ToggleGroup
-            value={[view]}
-            onValueChange={(next) => {
-              const v = next[0] as LibraryView | undefined;
-              if (v) setView(v);
-            }}
-            variant="outline"
-            size="sm"
-            spacing={0}
-            aria-label="Library view"
-          >
-            <ToggleGroupItem value="hours">Hours</ToggleGroupItem>
-            <ToggleGroupItem value="recent">Recent</ToggleGroupItem>
-            <ToggleGroupItem value="name">A–Z</ToggleGroupItem>
-            <ToggleGroupItem value="panorama">Panorama</ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-      </div>
-
       {view === "panorama" ? (
         <PlaytimePanorama games={playtime.games} artwork={artwork} />
       ) : (
@@ -311,24 +326,11 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
         </>
       )}
 
-      {!meta.hasSteamApiKey && playtime.source === "account-data-html" ? (
-        <Alert>
-          <AlertDescription>
-            Showing {playtime.games.length} titles from the games page snapshot
-            (often ~25). For your full library, run{" "}
-            <code className="font-mono text-primary">
-              npm run fetch:owned-games
-            </code>{" "}
-            after a Steam login session, or add{" "}
-            <code className="font-mono text-primary">STEAM_API_KEY</code> to{" "}
-            <code className="font-mono text-primary">.env.local</code>.
-          </AlertDescription>
-        </Alert>
-      ) : (
+      {!partialLibrary ? (
         <p className="text-xs text-muted-foreground">
           {playtime.games.length} titles · {playtime.source}
         </p>
-      )}
+      ) : null}
     </div>
   );
 }

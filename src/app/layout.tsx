@@ -38,7 +38,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <div className="ambient" aria-hidden>
             <span className="ambient-orb ambient-orb-a" />
             <span className="ambient-orb ambient-orb-b" />
-            <span className="ambient-grid" />
           </div>
           <div className="shell">{children}</div>
         </TooltipProvider>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   artCandidates,
   steamCapsuleUrl,
@@ -88,9 +88,12 @@ export function SteamArt({
   }, [appId, artwork, kind]);
 
   const [srcIdx, setSrcIdx] = useState(0);
-  useEffect(() => {
+  const candidateKey = candidates.join("\0");
+  const [seenKey, setSeenKey] = useState(candidateKey);
+  if (seenKey !== candidateKey) {
+    setSeenKey(candidateKey);
     setSrcIdx(0);
-  }, [candidates]);
+  }
 
   const failed = !appId || appId <= 0 || srcIdx >= candidates.length;
   const variantClass =

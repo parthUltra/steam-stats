@@ -385,6 +385,7 @@ function PanoTile({
         animationDelay: `${Math.min(index, 20) * 18}ms`,
       }}
       title={`${tile.name} · ${formatPlayHours(tile.hours)}h`}
+      aria-label={`${tile.name}, ${formatPlayHours(tile.hours)} hours`}
     >
       <SteamArt
         appId={tile.appId}
@@ -446,8 +447,7 @@ export function PlaytimePanorama({
     <section className="pano pano-tab">
       <div className="pano-head">
         <div>
-          <p className="pano-kicker">Playtime panorama</p>
-          <h3>Hours as a wall of capsules</h3>
+          <h3>Playtime panorama</h3>
           <p className="pano-lede">
             {tiles.length} titles over 30m · {formatPlayHours(totalHours)}h —
             most played at top-left, lesser toward the edges.

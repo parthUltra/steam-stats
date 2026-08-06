@@ -12,7 +12,6 @@ import {
 } from "@/lib/steam/artwork";
 import type { ArtworkUrls } from "@/lib/steam/artwork-resolve";
 import { resolveSteamAppId } from "@/lib/steam/resolve-app-id";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -65,29 +64,6 @@ function SteamThumb({
   );
 }
 
-function HeroArt({
-  appId,
-  artwork,
-  className,
-  kind,
-}: {
-  appId: number;
-  artwork?: Record<string, ArtworkUrls>;
-  className: string;
-  kind: "header" | "library";
-}) {
-  return (
-    <SteamArt
-      appId={appId}
-      name=""
-      artwork={artwork}
-      variant={kind === "library" ? "portrait" : "header"}
-      className={className}
-      framed={false}
-    />
-  );
-}
-
 function TelemetryDuel({
   spent,
   current,
@@ -117,8 +93,7 @@ function TelemetryDuel({
     <section className="telemetry">
       <div className="telemetry-head">
         <div>
-          <p className="telemetry-kicker">Wallet vs shelf</p>
-          <h3>Library readout</h3>
+          <h3>Paid vs shelf</h3>
         </div>
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
           <Switch
@@ -154,8 +129,14 @@ function TelemetryDuel({
 
       <div className="tug">
         <div className="tug-track">
-          <span className="tug-spent" style={{ width: `${spentPct}%` }} />
-          <span className="tug-now" style={{ width: `${nowPct}%` }} />
+          <span
+            className="tug-spent"
+            style={{ ["--fill" as string]: spentPct / 100 }}
+          />
+          <span
+            className="tug-now"
+            style={{ ["--fill" as string]: nowPct / 100 }}
+          />
         </div>
         <div className="tug-legend">
           <span className="amber">Paid</span>
@@ -186,7 +167,11 @@ function MonthRail({
         >
           <span className="month-rail-label">{r.month.replace(/^\d{2}/, "")}</span>
           <div className="month-rail-track">
-            <span style={{ width: `${Math.max(3, (r.spent / max) * 100)}%` }} />
+            <span
+              style={{
+                ["--fill" as string]: Math.max(0.03, r.spent / max),
+              }}
+            />
           </div>
           <span className="month-rail-val mono">{money(r.spent)}</span>
         </div>
@@ -287,7 +272,7 @@ function DealCard({
       <div className="deal-card-body">
         <div className="deal-card-top">
           <span className={`deal-chip ${chip.className}`}>{chip.label}</span>
-          {goodDeal ? <span className="deal-chip win">Strong buy</span> : null}
+          {goodDeal ? <span className="deal-chip win">Under shelf</span> : null}
           {game.onSale ? <span className="deal-chip sale">On sale</span> : null}
           {nowListed == null && low != null ? (
             <span className="deal-chip muted-chip">Unlisted</span>
@@ -450,7 +435,7 @@ function CostPerHourRow({
         </div>
         {mode === "value" ? (
           <div className="cph-bar" aria-hidden>
-            <span style={{ width: `${pct}%` }} />
+            <span style={{ ["--fill" as string]: pct / 100 }} />
           </div>
         ) : null}
       </div>
@@ -522,22 +507,6 @@ export function SpendingValue({
   const unpaid = valuation.unpaidShelf;
   const giftsSent = valuation.giftsSent;
 
-  const featured = useMemo(() => {
-    const resolved = valuation.games.filter(
-      (g) =>
-        g.resolved &&
-        g.paid != null &&
-        effectiveShelfNow(g) != null &&
-        !g.isGift,
-    );
-    if (!resolved.length) return valuation.games.find((g) => g.resolved) ?? null;
-    return [...resolved].sort((a, b) => {
-      const da = (effectiveShelfNow(a) ?? 0) - (a.paid ?? 0);
-      const db = (effectiveShelfNow(b) ?? 0) - (b.paid ?? 0);
-      return db - da;
-    })[0];
-  }, [valuation.games]);
-
   const dealGames = useMemo(() => {
     let list = valuation.games.filter((g) => g.resolved);
     if (filter === "paid") list = list.filter((g) => g.kind === "purchased");
@@ -572,44 +541,14 @@ export function SpendingValue({
 
   return (
     <div className="spend-shell tab-panel">
-      <section className="spend-hero">
-        {featured?.steamAppId ? (
-          <HeroArt
-            appId={featured.steamAppId}
-            artwork={artwork}
-            className="spend-hero-bg"
-            kind="header"
-          />
-        ) : null}
-        <div className="spend-hero-veil" />
-        <div className="spend-hero-copy">
-          <p className="spend-kicker">Wallet · shelf · signal</p>
+      <div className="spend-toolbar">
+        <div>
           <h2>Value & spending</h2>
           <p className="spend-lede">
             Paid vs market in one readout — gifts you sent stay off the shelf.
           </p>
-          <div className="spend-hero-pills">
-            <Badge
-              variant="outline"
-              className="border-[color-mix(in_oklab,var(--amber)_40%,transparent)] bg-[color-mix(in_oklab,var(--amber)_12%,transparent)] text-[var(--amber)]"
-            >
-              Spent {money(spent)}
-            </Badge>
-            <Badge
-              variant="outline"
-              className="border-[color-mix(in_oklab,var(--cyan)_40%,transparent)] bg-[color-mix(in_oklab,var(--cyan)_12%,transparent)] text-[var(--cyan)]"
-            >
-              Now {money(shelf.current)}
-            </Badge>
-            <Badge
-              variant="outline"
-              className="border-[color-mix(in_oklab,var(--rose)_40%,transparent)] bg-[color-mix(in_oklab,var(--rose)_12%,transparent)] text-[var(--rose)]"
-            >
-              Low {money(shelf.lowest)}
-            </Badge>
-          </div>
         </div>
-        <div className="spend-hero-side">
+        <div className="spend-toolbar-actions">
           <Button
             type="button"
             onClick={onRefreshPrices}
@@ -617,70 +556,13 @@ export function SpendingValue({
           >
             {refreshing ? "Refreshing…" : "Refresh market prices"}
           </Button>
-          <p className="meta-line">
+          <p className="meta-line meta-line-emphasis">
             {meta.priceCacheUpdatedAt
-              ? `Quotes ${new Date(meta.priceCacheUpdatedAt).toLocaleString()}`
-              : "No price cache yet"}
+              ? `Quotes updated ${new Date(meta.priceCacheUpdatedAt).toLocaleString()}`
+              : "No price cache yet — refresh to load market quotes"}
           </p>
-          {featured ? (
-            featured.steamAppId ? (
-              <a
-                className="spend-featured-mini"
-                href={steamStoreUrl(featured.steamAppId)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <SteamThumb
-                  appId={featured.steamAppId}
-                  name={featured.title}
-                  variant="portrait"
-                  artwork={artwork}
-                />
-                <div>
-                  <span className="muted">Standout value</span>
-                  <strong>{featured.title}</strong>
-                  <span className="mono cyan">
-                    Paid {featured.paid != null ? money(featured.paid) : "—"} ·
-                    Now{" "}
-                    {featured.current != null && featured.current > 0
-                      ? money(featured.current)
-                      : "—"}
-                    {!(featured.current != null && featured.current > 0) &&
-                    featured.lowest != null &&
-                    featured.lowest > 0
-                      ? ` · low ${money(featured.lowest)}`
-                      : ""}
-                  </span>
-                </div>
-              </a>
-            ) : (
-              <div className="spend-featured-mini">
-                <SteamThumb
-                  appId={null}
-                  name={featured.title}
-                  variant="portrait"
-                />
-                <div>
-                  <span className="muted">Standout value</span>
-                  <strong>{featured.title}</strong>
-                  <span className="mono cyan">
-                    Paid {featured.paid != null ? money(featured.paid) : "—"} ·
-                    Now{" "}
-                    {featured.current != null && featured.current > 0
-                      ? money(featured.current)
-                      : "—"}
-                    {!(featured.current != null && featured.current > 0) &&
-                    featured.lowest != null &&
-                    featured.lowest > 0
-                      ? ` · low ${money(featured.lowest)}`
-                      : ""}
-                  </span>
-                </div>
-              </div>
-            )
-          ) : null}
         </div>
-      </section>
+      </div>
 
       <TelemetryDuel
         spent={spent}
@@ -891,12 +773,12 @@ export function SpendingValue({
         </div>
       </section>
 
-      <div className="two-col signal-grid">
+      <div className="two-col signal-grid spend-secondary">
         <section className="spend-section panel-glass">
           <div className="spend-section-head">
             <div>
               <h3>Spend by month</h3>
-              <p>Wallet heat over time</p>
+              <p>What left the wallet over time</p>
             </div>
           </div>
           <MonthRail rows={spending.monthly} money={money} />
@@ -913,90 +795,95 @@ export function SpendingValue({
         </section>
       </div>
 
-      <section className="spend-section">
-        <div className="spend-section-head">
-          <div>
-            <h3>Habits</h3>
-          </div>
-        </div>
-        <div className="habit-cloud">
-          {spending.habits.map((h) => (
-            <p key={h} className="habit-chip">
-              {h}
-            </p>
-          ))}
-          <p className="habit-chip">
-            Average {money(spending.avgPurchase)} · median{" "}
-            {money(spending.medianPurchase)}
-          </p>
-          <p className="habit-chip accent">
-            Sale savings {money(spending.saleSavings)} vs MSRP
-          </p>
-        </div>
-      </section>
-
-      <div className="two-col signal-grid">
-        <section className="spend-section panel-glass">
-          <div className="spend-section-head">
-            <div>
-              <h3>Recent transactions</h3>
+      <details className="spend-details">
+        <summary>More ledger detail</summary>
+        <div className="spend-details-body">
+          <section className="spend-section">
+            <div className="spend-section-head">
+              <div>
+                <h3>Habits</h3>
+              </div>
             </div>
-          </div>
-          <ul className="tx-rail">
-            {recentPurchases.slice(0, 10).map((p, idx) => {
-              const title = p.items[0] ?? p.type;
-              const appId = resolveSteamAppId(title, titleCatalog);
-              return (
-                <li key={`${p.date}-${idx}`} className="tx-row">
-                  <SteamThumb
-                    appId={appId}
-                    name={title}
-                    artwork={artwork}
-                  />
-                  <div>
-                    <strong>
-                      {p.items.slice(0, 2).join(", ") || p.type}
-                    </strong>
-                    <small>
-                      {p.date}
-                      {p.refunded ? " · refunded" : ""}
-                      {p.discountPct ? ` · ${p.discountPct}%` : ""}
-                    </small>
-                  </div>
-                  <span className="mono">
-                    {p.total != null
-                      ? moneyFmt(p.total, p.currency ?? currency)
-                      : "—"}
+            <div className="habit-cloud">
+              {spending.habits.map((h) => (
+                <p key={h} className="habit-chip">
+                  {h}
+                </p>
+              ))}
+              <p className="habit-chip">
+                Average {money(spending.avgPurchase)} · median{" "}
+                {money(spending.medianPurchase)}
+              </p>
+              <p className="habit-chip accent">
+                Sale savings {money(spending.saleSavings)} vs MSRP
+              </p>
+            </div>
+          </section>
+
+          <div className="two-col signal-grid">
+            <section className="spend-section panel-glass">
+              <div className="spend-section-head">
+                <div>
+                  <h3>Recent transactions</h3>
+                </div>
+              </div>
+              <ul className="tx-rail">
+                {recentPurchases.slice(0, 10).map((p, idx) => {
+                  const title = p.items[0] ?? p.type;
+                  const appId = resolveSteamAppId(title, titleCatalog);
+                  return (
+                    <li key={`${p.date}-${idx}`} className="tx-row">
+                      <SteamThumb
+                        appId={appId}
+                        name={title}
+                        artwork={artwork}
+                      />
+                      <div>
+                        <strong>
+                          {p.items.slice(0, 2).join(", ") || p.type}
+                        </strong>
+                        <small>
+                          {p.date}
+                          {p.refunded ? " · refunded" : ""}
+                          {p.discountPct ? ` · ${p.discountPct}%` : ""}
+                        </small>
+                      </div>
+                      <span className="mono">
+                        {p.total != null
+                          ? moneyFmt(p.total, p.currency ?? currency)
+                          : "—"}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+
+            <section className="spend-section panel-glass">
+              <div className="spend-section-head">
+                <div>
+                  <h3>Spend by year</h3>
+                </div>
+              </div>
+              <MonthRail
+                rows={spending.yearly.map((y) => ({
+                  month: y.year,
+                  spent: y.spent,
+                  count: 0,
+                }))}
+                money={money}
+              />
+              <div className="license-pills">
+                {spending.licenseMix.map((l) => (
+                  <span key={l.method} className="license-pill">
+                    {l.method} · {l.count}
                   </span>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-
-        <section className="spend-section panel-glass">
-          <div className="spend-section-head">
-            <div>
-              <h3>Spend by year</h3>
-            </div>
+                ))}
+              </div>
+            </section>
           </div>
-          <MonthRail
-            rows={spending.yearly.map((y) => ({
-              month: y.year,
-              spent: y.spent,
-              count: 0,
-            }))}
-            money={money}
-          />
-          <div className="license-pills">
-            {spending.licenseMix.map((l) => (
-              <span key={l.method} className="license-pill">
-                {l.method} · {l.count}
-              </span>
-            ))}
-          </div>
-        </section>
-      </div>
+        </div>
+      </details>
     </div>
   );
 }

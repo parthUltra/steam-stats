@@ -41,11 +41,10 @@ export function DashboardView({
             {STEAM_MARK}
           </div>
           <div className="flex flex-col gap-0.5">
-            <p className="flex items-center gap-2 text-[0.68rem] font-semibold tracking-[0.16em] text-primary uppercase">
-              <span className="ops-pulse" />
-              Local telemetry
-            </p>
             <h1 className="text-xl font-bold tracking-tight">Steam Stats</h1>
+            <p className="text-sm text-muted-foreground">
+              Local library &amp; spend
+            </p>
           </div>
         </div>
 
