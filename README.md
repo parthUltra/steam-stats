@@ -23,54 +23,56 @@ Personal Steam analytics dashboard — **library playtime**, **spend vs shelf va
 - A **Steam account** (you log in once in a local browser window)
 - Optional: [Steam Web API key](https://steamcommunity.com/dev/apikey) for richer library APIs
 
-## Installation
+## Automatic setup (one command)
+
+Clone, install, Steam login, fetch your data, and open the dashboard:
+
+```bash
+git clone https://github.com/parthUltra/steam-stats.git && cd steam-stats && npm install && npm run launch
+```
+
+A browser opens for **Steam login** (Steam Guard if needed). When that finishes, the app starts and your default browser opens to [http://localhost:3000](http://localhost:3000).
+
+Faster (skips market price refresh):
+
+```bash
+git clone https://github.com/parthUltra/steam-stats.git && cd steam-stats && npm install && npm run launch:fast
+```
+
+Press **Ctrl+C** in the terminal to stop the server.
+
+Already cloned? Just run `npm run launch` from the project folder.
+
+## Manual setup
+
+For users who want each step separate.
+
+### Install
 
 ```bash
 git clone https://github.com/parthUltra/steam-stats.git
 cd steam-stats
 npm install
-
-# Playwright Chromium (used for Steam login + Account Data fetch)
 npx playwright install chromium
-
-cp .env.example .env.local
-# Optional: add STEAM_API_KEY=... in .env.local
+cp .env.example .env.local   # optional: set STEAM_API_KEY
 ```
 
-## Usage
-
-### 1. Fetch your Steam Account Data (one-time / when you want a refresh)
+### Fetch & parse data
 
 ```bash
-npm run fetch:account-data
-```
-
-A Chromium window opens. Log into Steam (Steam Guard if prompted). The script saves HTML snapshots under `samples/account-data/` and a session under `.steam-session/` (both gitignored).
-
-### 2. Parse snapshots into JSON
-
-```bash
+npm run fetch:account-data   # log into Steam in the opened window
 npm run parse:account-data
-```
-
-Writes fixtures to `samples/parsed/` (gitignored).
-
-### 3. Pull full library playtime (recommended)
-
-Uses the local Steam session from step 1:
-
-```bash
 npm run fetch:owned-games
 ```
 
-### 4. (Optional) Enrich purchase line items & prices
+### Optional: transactions & prices
 
 ```bash
-npm run fetch:transactions   # per-item paid amounts from Steam transactions
-npm run refresh:prices       # market quotes cache in data/
+npm run fetch:transactions
+npm run refresh:prices
 ```
 
-### 5. Run the app
+### Run the app
 
 ```bash
 npm run dev
@@ -78,9 +80,13 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+### Scripts reference
+
 | Script | Purpose |
 |--------|---------|
-| `npm run dev` | Next.js dev server |
+| `npm run launch` | **All-in-one:** login → fetch → parse → prices → open dashboard |
+| `npm run launch:fast` | Same as launch, skip price refresh |
+| `npm run dev` | Next.js dev server only |
 | `npm run build` / `npm start` | Production build & serve |
 | `npm run fetch:account-data` | Steam login + Account Data HTML |
 | `npm run parse:account-data` | Parse HTML → JSON |
@@ -88,6 +94,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `npm run fetch:transactions` | Transaction line-item prices |
 | `npm run refresh:prices` | Refresh `data/price-cache.json` |
 | `npm run lint` | ESLint |
+
 
 ## Configuration
 

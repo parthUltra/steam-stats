@@ -18,7 +18,9 @@
     "analyze:account-data": "tsx scripts/analyze-account-data.ts",
     "parse:account-data": "tsx scripts/parse-account-data.ts",
     "fetch:transactions": "tsx scripts/fetch-transactions.ts",
-    "refresh:prices": "tsx scripts/refresh-prices.ts"
+    "refresh:prices": "tsx scripts/refresh-prices.ts",
+    "launch": "bash scripts/launch.sh",
+    "launch:fast": "STEAM_STATS_SKIP_PRICES=1 bash scripts/launch.sh"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
