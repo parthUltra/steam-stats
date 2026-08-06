@@ -2,15 +2,15 @@ import { NextResponse } from "next/server";
 import { buildDashboard } from "@/lib/analytics/dashboard";
 
 export const dynamic = "force-dynamic";
+/** Price refresh uses async pool (concurrency 3) + Steam rate limiter; usually finishes under this budget. */
 export const maxDuration = 120;
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const refresh = searchParams.get("refresh") === "1";
+export async function GET() {
   try {
+    // Tops up missing/stale quotes (24h TTL); force via CLI: npm run refresh:prices
     const data = await buildDashboard({
-      refreshPrices: refresh,
-      priceLimit: refresh ? 80 : 60,
+      refreshPrices: false,
+      priceLimit: 80,
     });
     return NextResponse.json(data);
   } catch (err) {

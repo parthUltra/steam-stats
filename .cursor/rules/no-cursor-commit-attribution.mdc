@@ -1,0 +1,12 @@
+---
+description: Never attribute git commits or PRs to Cursor Agent
+alwaysApply: true
+---
+
+# No Cursor Agent git attribution
+
+When committing, pushing, or opening PRs in this repo:
+
+- Use only the local git `user.name` / `user.email`. Never attribute to Cursor Agent.
+- Never add `Co-authored-by: Cursor` / `Co-authored-by: Cursor Agent` (or any cursoragent email) trailers.
+- Do not set `--author` or `GIT_AUTHOR_*` / `GIT_COMMITTER_*` to Cursor identities.

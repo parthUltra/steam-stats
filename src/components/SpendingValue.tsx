@@ -467,15 +467,7 @@ function CostPerHourRow({
   return <div className="cph-row">{body}</div>;
 }
 
-export function SpendingValue({
-  data,
-  onRefreshPrices,
-  refreshing,
-}: {
-  data: DashboardPayload;
-  onRefreshPrices: () => void;
-  refreshing: boolean;
-}) {
+export function SpendingValue({ data }: { data: DashboardPayload }) {
   const { spending, valuation, recentPurchases, meta, costPerHour, artwork, playtime } =
     data;
   const currency = valuation.currency || spending.currency;
@@ -549,17 +541,10 @@ export function SpendingValue({
           </p>
         </div>
         <div className="spend-toolbar-actions">
-          <Button
-            type="button"
-            onClick={onRefreshPrices}
-            disabled={refreshing}
-          >
-            {refreshing ? "Refreshing…" : "Refresh market prices"}
-          </Button>
           <p className="meta-line meta-line-emphasis">
             {meta.priceCacheUpdatedAt
               ? `Quotes updated ${new Date(meta.priceCacheUpdatedAt).toLocaleString()}`
-              : "No price cache yet — refresh to load market quotes"}
+              : "Market quotes load automatically"}
           </p>
         </div>
       </div>

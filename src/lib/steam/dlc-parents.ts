@@ -3,6 +3,7 @@
  * Cached under data/ so dashboard builds stay cheap.
  */
 import fs from "node:fs/promises";
+import { mapPool, steamRateLimiter } from "@/lib/async/pool";
 import { dataPath, ensureDataDir } from "@/lib/data/load-local";
 
 export type DlcParentCache = {
@@ -16,8 +17,8 @@ export type DlcParentCache = {
 const CACHE_FILE = "dlc-parents.json";
 const UA = "steam-stats-local/0.1 (personal; localhost)";
 const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
-/** Steam returns null for multi-appid + filters=basic — one id per request. */
-const CONCURRENCY_GAP_MS = 120;
+const DLC_CONCURRENCY = 4;
+const CHECKPOINT_EVERY = 20;
 
 async function loadCache(): Promise<DlcParentCache> {
   await ensureDataDir();
@@ -34,10 +35,6 @@ async function saveCache(cache: DlcParentCache) {
   await fs.writeFile(dataPath(CACHE_FILE), JSON.stringify(cache, null, 2));
 }
 
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 type AppDetailsEntry = {
   success?: boolean;
   data?: {
@@ -48,18 +45,20 @@ type AppDetailsEntry = {
 
 async function fetchOne(appId: number): Promise<AppDetailsEntry | null> {
   const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&filters=basic`;
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as Record<string, AppDetailsEntry> | null;
-    if (!data || typeof data !== "object") return null;
-    return data[String(appId)] ?? null;
-  } catch {
-    return null;
-  }
+  return steamRateLimiter.schedule(async () => {
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": UA, Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as Record<string, AppDetailsEntry> | null;
+      if (!data || typeof data !== "object") return null;
+      return data[String(appId)] ?? null;
+    } catch {
+      return null;
+    }
+  });
 }
 
 /**
@@ -87,8 +86,8 @@ export async function resolveDlcParents(
     need.push(id);
   }
 
-  for (let i = 0; i < need.length; i++) {
-    const id = need[i]!;
+  let completed = 0;
+  await mapPool(need, DLC_CONCURRENCY, async (id) => {
     const key = String(id);
     const entry = await fetchOne(id);
     const type = entry?.data?.type?.toLowerCase();
@@ -106,8 +105,14 @@ export async function resolveDlcParents(
       notDlc.add(key);
     }
     // leave unknown on network failure so we retry next build
-    if (i + 1 < need.length) await sleep(CONCURRENCY_GAP_MS);
-  }
+
+    completed += 1;
+    if (completed % CHECKPOINT_EVERY === 0) {
+      cache.notDlc = [...notDlc];
+      cache.updatedAt = new Date().toISOString();
+      await saveCache(cache);
+    }
+  });
 
   cache.notDlc = [...notDlc];
   cache.updatedAt = new Date().toISOString();

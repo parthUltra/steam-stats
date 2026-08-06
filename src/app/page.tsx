@@ -7,7 +7,7 @@ export default async function Home() {
   let initialData = null;
   let initialError: string | null = null;
   try {
-    // Use cache only on first paint so the page loads fast; user can refresh prices.
+    // Cache-only first paint; client /api/dashboard tops up stale quotes.
     initialData = await buildDashboard({ refreshPrices: false, priceLimit: 0 });
   } catch (err) {
     initialError = err instanceof Error ? err.message : "Failed to load";

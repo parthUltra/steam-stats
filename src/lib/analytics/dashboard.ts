@@ -140,25 +140,30 @@ export async function buildDashboard(options?: {
     );
   const titles = [...new Set([...libraryTitles, ...giftSentTitles])];
   let priceCache = await loadPriceCache();
-  const needsRefresh =
-    options?.refreshPrices ||
-    !priceCache.updatedAt ||
-    Object.keys(priceCache.quotes).length < Math.min(10, titles.length);
-
-  if (needsRefresh) {
+  // priceLimit 0 = SSR fast path (cache only). Otherwise top up missing/stale
+  // quotes automatically (24h TTL unless force).
+  const priceLimit = options?.priceLimit ?? 60;
+  if (priceLimit > 0) {
     priceCache = await refreshPricesForTitles(titles, {
       force: Boolean(options?.refreshPrices),
-      limit: options?.priceLimit ?? 60,
+      limit: priceLimit,
     });
   }
 
-  // Prefer resolving titles that look like expansions first; still walk all
-  // unknown ids so soundtrack/DLC without ":" in the name get parents too.
-  const dlcParents = await resolveDlcParents(
-    Object.values(priceCache.quotes)
-      .map((q) => q.steamAppId)
-      .filter((id): id is number => id != null),
-  );
+  const quoteAppIds = Object.values(priceCache.quotes)
+    .map((q) => q.steamAppId)
+    .filter((id): id is number => id != null);
+
+  // DLC parents + early artwork (playtime ∪ quote ids) overlap — artwork
+  // that needs valuation-hydrated ids is filled in a second pass below.
+  const earlyArtworkIds = [
+    ...playedGames.map((g) => g.appId),
+    ...quoteAppIds,
+  ];
+  const [dlcParents, earlyArtwork] = await Promise.all([
+    resolveDlcParents(quoteAppIds),
+    resolveArtworkForAppIds(earlyArtworkIds),
+  ]);
 
   const valuation = buildLibraryValuation(
     bundle.purchases,
@@ -209,7 +214,17 @@ export async function buildDashboard(options?: {
       .map((g) => g.steamAppId)
       .filter((id): id is number => id != null),
   ];
-  const artwork = await resolveArtworkForAppIds(artworkAppIds);
+  const earlyKeys = new Set(Object.keys(earlyArtwork));
+  const missingArtworkIds = [
+    ...new Set(artworkAppIds.filter((id) => !earlyKeys.has(String(id)))),
+  ];
+  const artwork =
+    missingArtworkIds.length > 0
+      ? {
+          ...earlyArtwork,
+          ...(await resolveArtworkForAppIds(missingArtworkIds)),
+        }
+      : earlyArtwork;
 
   return {
     meta: {

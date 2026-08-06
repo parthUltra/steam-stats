@@ -1,4 +1,9 @@
 import fs from "node:fs/promises";
+import {
+  cheapSharkRateLimiter,
+  mapPool,
+  steamRateLimiter,
+} from "@/lib/async/pool";
 import { dataPath, ensureDataDir } from "@/lib/data/load-local";
 
 export type GamePriceQuote = {
@@ -20,6 +25,8 @@ export type PriceCache = {
 
 const CACHE_FILE = "price-cache.json";
 const UA = "steam-stats-local/0.1 (personal; localhost)";
+const TITLE_CONCURRENCY = 3;
+const CHECKPOINT_EVERY = 10;
 
 function normalizeTitle(title: string): string {
   return title
@@ -78,8 +85,8 @@ async function steamStoreSearch(title: string): Promise<StoreSearchItem | null> 
     seen.add(term.toLowerCase());
 
     const url = `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(term)}&l=english&cc=US`;
-    const data = await fetchJson<{ total: number; items: StoreSearchItem[] }>(
-      url,
+    const data = await steamRateLimiter.schedule(() =>
+      fetchJson<{ total: number; items: StoreSearchItem[] }>(url),
     );
     if (!data?.items?.length) continue;
 
@@ -109,15 +116,17 @@ async function steamStoreSearch(title: string): Promise<StoreSearchItem | null> 
 
 async function steamPrice(appId: number, cc: string): Promise<number | null> {
   const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&cc=${cc}&filters=price_overview`;
-  const data = await fetchJson<
-    Record<
-      string,
-      {
-        success?: boolean;
-        data?: { price_overview?: { final?: number } };
-      }
-    >
-  >(url);
+  const data = await steamRateLimiter.schedule(() =>
+    fetchJson<
+      Record<
+        string,
+        {
+          success?: boolean;
+          data?: { price_overview?: { final?: number } };
+        }
+      >
+    >(url),
+  );
   const entry = data?.[String(appId)];
   if (!entry?.success) return null;
   const overview = entry.data?.price_overview;
@@ -134,26 +143,93 @@ type CheapSharkGame = {
 };
 
 async function cheapSharkLowest(steamAppId: number): Promise<number | null> {
-  const list = await fetchJson<CheapSharkGame[]>(
-    `https://www.cheapshark.com/api/1.0/games?steamAppID=${steamAppId}&limit=5`,
+  const list = await cheapSharkRateLimiter.schedule(() =>
+    fetchJson<CheapSharkGame[]>(
+      `https://www.cheapshark.com/api/1.0/games?steamAppID=${steamAppId}&limit=5`,
+    ),
   );
   if (!list?.length) return null;
   const game =
     list.find((g) => String(g.steamAppID) === String(steamAppId)) ?? list[0];
-  const detail = await fetchJson<{
-    cheapestPriceEver?: { price?: string };
-  }>(`https://www.cheapshark.com/api/1.0/games?id=${game.gameID}`);
+  const detail = await cheapSharkRateLimiter.schedule(() =>
+    fetchJson<{
+      cheapestPriceEver?: { price?: string };
+    }>(`https://www.cheapshark.com/api/1.0/games?id=${game.gameID}`),
+  );
   if (detail?.cheapestPriceEver?.price != null) {
     return Number(detail.cheapestPriceEver.price);
   }
   return Number(game.cheapest);
 }
 
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+function unresolvedQuote(title: string): GamePriceQuote {
+  return {
+    title,
+    steamAppId: null,
+    currentUsd: null,
+    lowestUsd: null,
+    currentInr: null,
+    retailUsd: null,
+    onSale: false,
+    source: "unresolved",
+    updatedAt: new Date().toISOString(),
+  };
 }
 
+async function refreshOneTitle(title: string): Promise<GamePriceQuote> {
+  try {
+    const hit = await steamStoreSearch(title);
+    if (!hit) return unresolvedQuote(title);
+
+    const currentUsd =
+      hit.price != null
+        ? hit.price.final / 100
+        : await steamPrice(hit.id, "us");
+
+    const [currentInr, lowestUsd] = await Promise.all([
+      steamPrice(hit.id, "in"),
+      cheapSharkLowest(hit.id),
+    ]);
+
+    const retailUsd =
+      hit.price != null ? hit.price.initial / 100 : currentUsd;
+
+    return {
+      title: hit.name,
+      steamAppId: hit.id,
+      currentUsd,
+      lowestUsd: lowestUsd ?? currentUsd,
+      currentInr,
+      retailUsd,
+      onSale:
+        retailUsd != null && currentUsd != null
+          ? currentUsd < retailUsd
+          : false,
+      source: lowestUsd != null ? "steam+cheapshark" : "steam",
+      updatedAt: new Date().toISOString(),
+    };
+  } catch {
+    return unresolvedQuote(title);
+  }
+}
+
+let refreshChain: Promise<unknown> = Promise.resolve();
+
 export async function refreshPricesForTitles(
+  titles: string[],
+  opts?: { force?: boolean; limit?: number },
+): Promise<PriceCache> {
+  // Serialize refreshes so Strict Mode / overlapping dashboard loads don't
+  // stampede Steam with duplicate title queues.
+  const run = refreshChain.then(() => refreshPricesForTitlesUnlocked(titles, opts));
+  refreshChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function refreshPricesForTitlesUnlocked(
   titles: string[],
   opts?: { force?: boolean; limit?: number },
 ): Promise<PriceCache> {
@@ -161,82 +237,33 @@ export async function refreshPricesForTitles(
   const now = Date.now();
   const maxAgeMs = 24 * 60 * 60 * 1000;
   const limit = opts?.limit ?? 80;
-  let processed = 0;
 
+  const queue: string[] = [];
   for (const title of titles) {
-    if (processed >= limit) break;
+    if (queue.length >= limit) break;
     const key = normalizeTitle(title);
     const existing = cache.quotes[key];
     if (
       !opts?.force &&
       existing &&
       existing.updatedAt &&
-      now - Date.parse(existing.updatedAt) < maxAgeMs &&
-      existing.steamAppId
+      now - Date.parse(existing.updatedAt) < maxAgeMs
     ) {
       continue;
     }
-
-    processed += 1;
-    try {
-      const hit = await steamStoreSearch(title);
-      await sleep(180);
-      if (!hit) {
-        cache.quotes[key] = {
-          title,
-          steamAppId: null,
-          currentUsd: null,
-          lowestUsd: null,
-          currentInr: null,
-          retailUsd: null,
-          onSale: false,
-          source: "unresolved",
-          updatedAt: new Date().toISOString(),
-        };
-        continue;
-      }
-
-      const currentUsd =
-        hit.price != null
-          ? hit.price.final / 100
-          : await steamPrice(hit.id, "us");
-      await sleep(120);
-      const currentInr = await steamPrice(hit.id, "in");
-      await sleep(120);
-      const lowestUsd = await cheapSharkLowest(hit.id);
-      await sleep(150);
-
-      const retailUsd =
-        hit.price != null ? hit.price.initial / 100 : currentUsd;
-
-      cache.quotes[key] = {
-        title: hit.name,
-        steamAppId: hit.id,
-        currentUsd,
-        lowestUsd: lowestUsd ?? currentUsd,
-        currentInr,
-        retailUsd,
-        onSale:
-          retailUsd != null && currentUsd != null
-            ? currentUsd < retailUsd
-            : false,
-        source: lowestUsd != null ? "steam+cheapshark" : "steam",
-        updatedAt: new Date().toISOString(),
-      };
-    } catch {
-      cache.quotes[key] = {
-        title,
-        steamAppId: null,
-        currentUsd: null,
-        lowestUsd: null,
-        currentInr: null,
-        retailUsd: null,
-        onSale: false,
-        source: "unresolved",
-        updatedAt: new Date().toISOString(),
-      };
-    }
+    queue.push(title);
   }
+
+  let completed = 0;
+  await mapPool(queue, TITLE_CONCURRENCY, async (title) => {
+    const quote = await refreshOneTitle(title);
+    cache.quotes[normalizeTitle(title)] = quote;
+    completed += 1;
+    if (completed % CHECKPOINT_EVERY === 0) {
+      cache.updatedAt = new Date().toISOString();
+      await savePriceCache(cache);
+    }
+  });
 
   cache.updatedAt = new Date().toISOString();
   await savePriceCache(cache);

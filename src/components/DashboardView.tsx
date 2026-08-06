@@ -15,15 +15,7 @@ const STEAM_MARK = (
   </svg>
 );
 
-export function DashboardView({
-  data,
-  onRefreshPrices,
-  refreshing,
-}: {
-  data: DashboardPayload;
-  onRefreshPrices: () => void;
-  refreshing: boolean;
-}) {
+export function DashboardView({ data }: { data: DashboardPayload }) {
   const [tab, setTab] = useState("library");
 
   return (
@@ -62,11 +54,7 @@ export function DashboardView({
         <GameLibrary data={data} />
       </TabsContent>
       <TabsContent value="spending" className="mt-0 outline-none">
-        <SpendingValue
-          data={data}
-          onRefreshPrices={onRefreshPrices}
-          refreshing={refreshing}
-        />
+        <SpendingValue data={data} />
       </TabsContent>
     </Tabs>
   );

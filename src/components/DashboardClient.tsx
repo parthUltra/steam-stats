@@ -8,6 +8,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
+async function fetchDashboard(): Promise<DashboardPayload> {
+  const res = await fetch("/api/dashboard", { cache: "no-store" });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || "Failed to load");
+  return json as DashboardPayload;
+}
+
 export function DashboardClient({
   initialData,
   initialError = null,
@@ -18,31 +25,38 @@ export function DashboardClient({
   const [data, setData] = useState<DashboardPayload | null>(initialData);
   const [error, setError] = useState<string | null>(initialError);
   const [loading, setLoading] = useState(!initialData && !initialError);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async (refresh = false) => {
-    if (refresh) setRefreshing(true);
-    else setLoading(true);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const next = await fetchDashboard();
+        if (cancelled) return;
+        setData(next);
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const retry = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `/api/dashboard${refresh ? "?refresh=1" : ""}`,
-        { cache: "no-store" },
-      );
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Failed to load");
-      setData(json as DashboardPayload);
+      setData(await fetchDashboard());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, []);
-
-  useEffect(() => {
-    void load(false);
-  }, [load]);
 
   if (loading && !data) {
     return (
@@ -77,7 +91,7 @@ export function DashboardClient({
             type="button"
             variant="outline"
             className="w-fit"
-            onClick={() => void load(false)}
+            onClick={() => void retry()}
           >
             <RefreshCwIcon data-icon="inline-start" />
             Retry
@@ -89,11 +103,5 @@ export function DashboardClient({
 
   if (!data) return null;
 
-  return (
-    <DashboardView
-      data={data}
-      refreshing={refreshing}
-      onRefreshPrices={() => void load(true)}
-    />
-  );
+  return <DashboardView data={data} />;
 }
