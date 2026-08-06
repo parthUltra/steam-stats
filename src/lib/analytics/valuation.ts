@@ -101,7 +101,11 @@ export function paidByTitle(
   const giftsOnly = Boolean(opts?.giftsOnly);
   const map = new Map<string, number>();
 
-  for (const row of purchases) {
+  // Library rows are newest-first; walk oldest→newest so the first kept copy
+  // owns cost basis. Multi-copy checkouts (4× PEAK) must not stack onto shelf.
+  const rows = giftsOnly ? purchases : [...purchases].reverse();
+
+  for (const row of rows) {
     const gift = isGiftPurchase(row);
     if (giftsOnly) {
       if (!gift || row.refunded) continue;
@@ -110,11 +114,24 @@ export function paidByTitle(
     }
 
     if (row.lineItems?.length) {
+      const amountsByKey = new Map<string, number[]>();
       for (const line of row.lineItems) {
         if (line.amount == null || line.amount < 0) continue;
         if (isGiftCardName(line.name)) continue;
         const key = norm(line.name);
-        map.set(key, (map.get(key) ?? 0) + line.amount);
+        const list = amountsByKey.get(key) ?? [];
+        list.push(line.amount);
+        amountsByKey.set(key, list);
+      }
+      for (const [key, amounts] of amountsByKey) {
+        const total = amounts.reduce((a, b) => a + b, 0);
+        if (giftsOnly) {
+          map.set(key, (map.get(key) ?? 0) + total);
+          continue;
+        }
+        // One shelf copy → one unit; extra copies in the same txn are ignored
+        const unit = total / amounts.length;
+        if (!map.has(key)) map.set(key, unit);
       }
       continue;
     }
@@ -123,10 +140,20 @@ export function paidByTitle(
     if (amount <= 0 || row.items.length === 0) continue;
     const usable = row.items.filter((i) => !isGiftCardName(i));
     if (!usable.length) continue;
-    const share = amount / usable.length;
+
+    const copiesByKey = new Map<string, number>();
     for (const item of usable) {
       const key = norm(item);
-      map.set(key, (map.get(key) ?? 0) + share);
+      copiesByKey.set(key, (copiesByKey.get(key) ?? 0) + 1);
+    }
+    const share = amount / usable.length;
+    for (const [key, copies] of copiesByKey) {
+      if (giftsOnly) {
+        map.set(key, (map.get(key) ?? 0) + share * copies);
+        continue;
+      }
+      // Each item slot is one unit share; only keep a single copy for shelf.
+      if (!map.has(key)) map.set(key, share);
     }
   }
   return map;
@@ -648,8 +675,8 @@ export function buildLibraryValuation(
 
   const note =
     usdRate != null && currency !== "USD"
-      ? `Spent is what you paid for your library. DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Gifts you sent are separate. Lows use ~${usdRate.toFixed(2)} ${currency}/USD when needed.`
-      : "Spent is what you paid for your library. DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Gifts you sent are separate.";
+      ? `Spent is what you paid for your library. Cost basis vs shelf counts one copy per title (extra copies in a multi-buy don’t stack). DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Gifts you sent are separate. Lows use ~${usdRate.toFixed(2)} ${currency}/USD when needed.`
+      : "Spent is what you paid for your library. Cost basis vs shelf counts one copy per title (extra copies in a multi-buy don’t stack). DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Gifts you sent are separate.";
 
   // Back-compat: excludingGifts ≈ full library shelf; includingGifts ignored for heroes
   const excludingGifts = shelfFull;

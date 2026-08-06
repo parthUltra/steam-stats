@@ -394,37 +394,34 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
   });
 }
 
+/** Prefer a 2× sibling of the same hashed asset — never a different legacy filename. */
+function sameAssetHiResFirst(urls: string[]): string[] {
+  const out: string[] = [];
+  for (const url of urls) {
+    const upgraded = url
+      .replace(/\/(library_capsule)\.jpe?g(\?|$)/i, "/$1_2x.jpg$2")
+      .replace(/\/(header)\.jpe?g(\?|$)/i, "/$1_2x.jpg$2")
+      .replace(/\/(main_capsule)\.jpe?g(\?|$)/i, "/$1_2x.jpg$2")
+      .replace(/\/(small_capsule)\.jpe?g(\?|$)/i, "/$1_2x.jpg$2");
+    if (upgraded !== url) out.push(upgraded);
+    out.push(url);
+  }
+  return out.filter((u, i, arr) => arr.indexOf(u) === i);
+}
+
 async function loadTileImage(
   tile: Tile,
   artwork?: Record<string, ArtworkUrls>,
   opts?: { highRes?: boolean },
 ): Promise<HTMLImageElement | null> {
   const kind = tile.orientation === "portrait" ? "library" : "header";
+  // Identical candidate list to on-screen SteamArt (GetItems / preview art).
+  // Export must not prefer legacy library_600x900 — Deadlock, Hades II, etc.
+  // ship different images on those paths.
   const base = expandedArtCandidates(tile.appId, kind, artwork);
-  const hiRes =
-    kind === "library"
-      ? [
-          `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${tile.appId}/library_600x900_2x.jpg`,
-          `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${tile.appId}/library_600x900.jpg`,
-        ]
-      : [
-          `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${tile.appId}/header_2x.jpg`,
-          `https://cdn.cloudflare.steamstatic.com/steam/apps/${tile.appId}/header_2x.jpg`,
-        ];
+  const candidates = opts?.highRes ? sameAssetHiResFirst(base) : base;
 
-  const candidates = opts?.highRes
-    ? [...hiRes, ...base].filter((u, i, arr) => arr.indexOf(u) === i)
-    : base;
-
-  // Prefer already-hashed 2× / large assets when exporting
-  const ordered = opts?.highRes
-    ? [
-        ...candidates.filter((u) => /_2x|600x900/i.test(u)),
-        ...candidates,
-      ].filter((u, i, arr) => arr.indexOf(u) === i)
-    : candidates;
-
-  for (const url of ordered) {
+  for (const url of candidates) {
     const img = await loadImage(proxiedArtUrl(url));
     if (img) return img;
   }
