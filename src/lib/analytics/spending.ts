@@ -62,6 +62,15 @@ export function moneyOf(row: PurchaseHistoryRow): number {
   return row.total?.amount ?? row.price?.amount ?? 0;
 }
 
+export type MonthlyPurchaseLine = {
+  title: string;
+  amount: number;
+  date: string;
+  discountPct: number | null;
+  /** Estimated pre-discount price for this line when known */
+  listAmount: number | null;
+};
+
 export type SpendingAnalytics = {
   currency: string;
   grossSpent: number;
@@ -77,7 +86,12 @@ export type SpendingAnalytics = {
   pctBoughtOnSale: number;
   avgDiscountWhenOnSale: number;
   saleSavings: number;
-  monthly: { month: string; spent: number; count: number }[];
+  monthly: {
+    month: string;
+    spent: number;
+    count: number;
+    lines: MonthlyPurchaseLine[];
+  }[];
   yearly: { year: string; spent: number; count: number }[];
   paymentMethods: { method: string; spent: number; count: number }[];
   topPurchases: {
@@ -119,6 +133,74 @@ function normalizePayment(raw: string): string {
   return t || "Unknown";
 }
 
+function isGiftCardName(name: string) {
+  return /gift card/i.test(name);
+}
+
+/**
+ * Pre-discount list price in purchase currency (INR).
+ *
+ * Trusted sources only:
+ * - Single-SKU checkout → receipt `originalPrice` (what Steam showed that day)
+ * - Multi-SKU checkout → null here; filled later from Steam INR retail (cc=IN)
+ *
+ * Never reverse a cart-level discount % onto one line (that produced fake
+ * figures like RDR2 “₹2512” from a blended −58% cart).
+ */
+function listAmountForLine(
+  paid: number,
+  row: PurchaseHistoryRow,
+  lineCount: number,
+): number | null {
+  const original = row.originalPrice?.amount;
+  if (
+    lineCount === 1 &&
+    original != null &&
+    original > 0 &&
+    original > paid
+  ) {
+    return Math.round(original);
+  }
+  return null;
+}
+
+function linesFromPurchase(row: PurchaseHistoryRow): MonthlyPurchaseLine[] {
+  const out: MonthlyPurchaseLine[] = [];
+  if (row.lineItems?.length) {
+    const usable = row.lineItems.filter(
+      (line) =>
+        line.amount != null &&
+        line.amount >= 0 &&
+        !isGiftCardName(line.name),
+    );
+    for (const line of usable) {
+      out.push({
+        title: line.name,
+        amount: line.amount!,
+        date: row.dateText,
+        discountPct: row.discountPct,
+        listAmount: listAmountForLine(line.amount!, row, usable.length),
+      });
+    }
+    return out;
+  }
+
+  const amount = moneyOf(row);
+  const usable = row.items.filter((i) => i && !isGiftCardName(i));
+  if (!usable.length || amount <= 0) return out;
+  const share = amount / usable.length;
+  for (const title of usable) {
+    out.push({
+      title,
+      amount: share,
+      date: row.dateText,
+      discountPct: row.discountPct,
+      listAmount: listAmountForLine(share, row, usable.length),
+    });
+  }
+  return out;
+}
+
 export function buildSpendingAnalytics(
   purchases: PurchaseHistoryRow[],
   licenses: LicenseRow[],
@@ -141,7 +223,10 @@ export function buildSpendingAnalytics(
   let saleSavings = 0;
 
   const amounts: number[] = [];
-  const monthlyMap = new Map<string, { spent: number; count: number }>();
+  const monthlyMap = new Map<
+    string,
+    { spent: number; count: number; lines: MonthlyPurchaseLine[] }
+  >();
   const yearlyMap = new Map<string, { spent: number; count: number }>();
   const paymentMap = new Map<string, { spent: number; count: number }>();
   const topPurchases: SpendingAnalytics["topPurchases"] = [];
@@ -185,9 +270,15 @@ export function buildSpendingAnalytics(
     grossSpent += amount;
     amounts.push(amount);
 
-    const m = monthlyMap.get(monthKey) ?? { spent: 0, count: 0 };
+    const purchaseLines = linesFromPurchase(row);
+    const m = monthlyMap.get(monthKey) ?? {
+      spent: 0,
+      count: 0,
+      lines: [],
+    };
     m.spent += amount;
     m.count += 1;
+    m.lines.push(...purchaseLines);
     monthlyMap.set(monthKey, m);
 
     const y = yearlyMap.get(yearKey) ?? { spent: 0, count: 0 };
@@ -269,25 +360,34 @@ export function buildSpendingAnalytics(
   }
   if (refundCount > 0) {
     habits.push(
-      `${refundCount} refunds totaling ${currency} ${refundedTotal.toLocaleString()}.`,
+      `${refundCount} refunds totaling ${currency} ${refundedTotal.toLocaleString()} (excluded from spend).`,
     );
   }
 
   const monthly = [...monthlyMap.entries()]
     .filter(([k]) => k !== "unknown")
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([month, v]) => ({ month, ...v }));
+    .map(([month, v]) => ({
+      month,
+      spent: v.spent,
+      count: v.count,
+      lines: [...v.lines].sort((a, b) => b.amount - a.amount),
+    }));
 
   const yearly = [...yearlyMap.entries()]
     .filter(([k]) => k !== "unknown")
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([year, v]) => ({ year, ...v }));
 
+  // Refunded purchases are skipped above and never enter grossSpent.
+  // Do not subtract refundedTotal again — that understated "You spent".
+  const netSpent = grossSpent;
+
   return {
     currency,
     grossSpent,
     refundedTotal,
-    netSpent: grossSpent - refundedTotal,
+    netSpent,
     giftSpend,
     marketSpend,
     walletTopUps,
@@ -329,6 +429,58 @@ export function gameTitlesFromPurchases(
     }
   }
   return [...titles];
+}
+
+function normTitle(title: string) {
+  return title
+    .toLowerCase()
+    .replace(/™|®/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Fill month-detail list prices from Steam store INR MSRP (cc=IN
+ * price_overview.initial). Never USD×FX, never cart-discount math.
+ *
+ * Overwrites only when we have a real INR retail; keeps single-checkout
+ * receipt originals when Steam retail is missing (e.g. packages).
+ */
+export function applySteamInrListPrices(
+  monthly: SpendingAnalytics["monthly"],
+  quotes: Record<
+    string,
+    { title: string; retailInr?: number | null; currentInr?: number | null }
+  >,
+) {
+  const byKey = new Map<string, number>();
+  for (const [key, q] of Object.entries(quotes)) {
+    if (q.retailInr == null || q.retailInr <= 0) continue;
+    byKey.set(normTitle(q.title), q.retailInr);
+    byKey.set(normTitle(key), q.retailInr);
+  }
+
+  for (const month of monthly) {
+    for (const line of month.lines) {
+      const t = normTitle(line.title);
+      const retail =
+        byKey.get(t) ??
+        [...byKey.entries()].find(([k]) => {
+          return (
+            k.startsWith(`${t}:`) ||
+            k.startsWith(`${t} `) ||
+            t.startsWith(`${k}:`) ||
+            t.startsWith(`${k} `)
+          );
+        })?.[1];
+
+      if (retail != null && retail > line.amount) {
+        line.listAmount = Math.round(retail);
+      } else if (line.listAmount != null) {
+        line.listAmount = Math.round(line.listAmount);
+      }
+    }
+  }
 }
 
 /** Titles that belong in your library for market valuation. */

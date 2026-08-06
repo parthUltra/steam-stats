@@ -2,6 +2,8 @@ import type { PlayedGame } from "@/lib/account-data";
 import type { ArtworkUrls } from "@/lib/steam/artwork-resolve";
 
 const CDN = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps";
+const SUB_CDN =
+  "https://shared.akamai.steamstatic.com/store_item_assets/steam/subs";
 
 /** Steam CDN artwork helpers (public store assets). */
 export function steamHeaderUrl(appId: number) {
@@ -14,6 +16,15 @@ export function steamLibraryCapsuleUrl(appId: number) {
 
 export function steamCapsuleUrl(appId: number) {
   return `${CDN}/${appId}/capsule_231x87.jpg`;
+}
+
+/** Package / bundle (sub) assets — used when storesearch returns a sub id. */
+export function steamPackageHeaderUrl(packageId: number) {
+  return `${SUB_CDN}/${packageId}/header.jpg`;
+}
+
+export function steamPackageCapsuleUrl(packageId: number) {
+  return `${SUB_CDN}/${packageId}/capsule_231x87.jpg`;
 }
 
 export function steamStoreUrl(appId: number) {
@@ -66,10 +77,23 @@ export function artCandidates(
       ? [resolveHeaderArt(appId, artwork), steamHeaderUrl(appId)]
       : kind === "header"
         ? [resolveCapsuleArt(appId, artwork), steamCapsuleUrl(appId)]
+        : [
+            // Packages often lack library capsules — try package header/capsule
+            steamPackageHeaderUrl(appId),
+            steamPackageCapsuleUrl(appId),
+            resolveHeaderArt(appId, artwork),
+            steamHeaderUrl(appId),
+          ];
+
+  const packageFallbacks =
+    kind === "header"
+      ? [steamPackageHeaderUrl(appId), steamPackageCapsuleUrl(appId)]
+      : kind === "capsule"
+        ? [steamPackageCapsuleUrl(appId), steamPackageHeaderUrl(appId)]
         : [];
 
   const out: string[] = [];
-  for (const u of [resolved, ...extras, legacy]) {
+  for (const u of [resolved, ...extras, legacy, ...packageFallbacks]) {
     if (u && !out.includes(u)) out.push(u);
   }
   return out;

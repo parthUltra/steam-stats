@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
 import type { CostPerHourGame } from "@/lib/analytics/cost-per-hour";
 import { effectiveShelfNow } from "@/lib/analytics/valuation";
@@ -11,7 +11,7 @@ import {
   steamStoreUrl,
 } from "@/lib/steam/artwork";
 import type { ArtworkUrls } from "@/lib/steam/artwork-resolve";
-import { resolveSteamAppId } from "@/lib/steam/resolve-app-id";
+import { resolveArtworkAppId, resolveSteamAppId } from "@/lib/steam/resolve-app-id";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -148,35 +148,203 @@ function TelemetryDuel({
   );
 }
 
+function formatMonthLabel(monthKey: string) {
+  const [y, m] = monthKey.split("-");
+  if (!y || !m) return monthKey;
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  if (Number.isNaN(d.getTime())) return monthKey;
+  return d.toLocaleString(undefined, { month: "long", year: "numeric" });
+}
+
 function MonthRail({
   rows,
   money,
+  selectedMonth,
+  onSelectMonth,
 }: {
   rows: { month: string; spent: number; count: number }[];
   money: (n: number) => string;
+  selectedMonth?: string | null;
+  onSelectMonth?: (month: string) => void;
 }) {
-  const slice = rows.slice(-14);
-  const max = Math.max(...slice.map((r) => r.spent), 1);
+  // Newest first — every month with spend, no truncation
+  const ordered = [...rows].reverse();
+  const max = Math.max(...ordered.map((r) => r.spent), 1);
+  const total = ordered.reduce((s, r) => s + r.spent, 0);
+  const interactive = Boolean(onSelectMonth);
+
   return (
-    <div className="month-rail">
-      {slice.map((r, i) => (
-        <div
-          key={r.month}
-          className="month-rail-row"
-          style={{ animationDelay: `${i * 35}ms` }}
-        >
-          <span className="month-rail-label">{r.month.replace(/^\d{2}/, "")}</span>
-          <div className="month-rail-track">
-            <span
-              style={{
-                ["--fill" as string]: Math.max(0.03, r.spent / max),
-              }}
-            />
-          </div>
-          <span className="month-rail-val mono">{money(r.spent)}</span>
-        </div>
-      ))}
+    <div className="month-rail-wrap">
+      <div className="month-rail">
+        {ordered.map((r, i) => {
+          const active = selectedMonth === r.month;
+          const className = `month-rail-row${interactive ? " is-button" : ""}${active ? " is-active" : ""}`;
+          const inner = (
+            <>
+              <span className="month-rail-label">
+                {r.month.replace(/^\d{2}/, "")}
+              </span>
+              <div className="month-rail-track">
+                <span
+                  style={{
+                    ["--fill" as string]: Math.max(0.03, r.spent / max),
+                  }}
+                />
+              </div>
+              <span className="month-rail-val mono">{money(r.spent)}</span>
+            </>
+          );
+          if (interactive) {
+            return (
+              <button
+                key={r.month}
+                type="button"
+                className={className}
+                style={{ animationDelay: `${Math.min(i, 24) * 28}ms` }}
+                onClick={() => onSelectMonth?.(r.month)}
+                aria-pressed={active}
+                aria-label={`${formatMonthLabel(r.month)}, ${money(r.spent)}, ${r.count} purchases`}
+              >
+                {inner}
+              </button>
+            );
+          }
+          return (
+            <div
+              key={r.month}
+              className={className}
+              style={{ animationDelay: `${Math.min(i, 24) * 28}ms` }}
+            >
+              {inner}
+            </div>
+          );
+        })}
+      </div>
+      {ordered.length > 0 ? (
+        <p className="month-rail-total mono">
+          <span>Total</span>
+          <strong>{money(total)}</strong>
+        </p>
+      ) : null}
     </div>
+  );
+}
+
+function MonthPurchasePanel({
+  month,
+  spent,
+  lines,
+  money,
+  artwork,
+  titleCatalog,
+  onClose,
+}: {
+  month: string;
+  spent: number;
+  lines: {
+    title: string;
+    amount: number;
+    date: string;
+    discountPct: number | null;
+    listAmount: number | null;
+  }[];
+  money: (n: number) => string;
+  artwork?: Record<string, ArtworkUrls>;
+  titleCatalog: { title: string; steamAppId: number | null }[];
+  onClose: () => void;
+}) {
+  const cards = useMemo(
+    () =>
+      lines.map((line) => ({
+        ...line,
+        appId: resolveArtworkAppId(line.title, titleCatalog),
+      })),
+    [lines, titleCatalog],
+  );
+
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [month]);
+
+  return (
+    <section
+      ref={panelRef}
+      className="spend-section month-detail"
+      aria-live="polite"
+    >
+      <div className="spend-section-head">
+        <div>
+          <h3>{formatMonthLabel(month)}</h3>
+          <p>
+            {cards.length} title{cards.length === 1 ? "" : "s"} · {money(spent)}{" "}
+            library spend
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onClose}>
+          Back to months
+        </Button>
+      </div>
+      <div className="month-purchase-grid">
+        {cards.map((line, idx) => {
+          // Discount vs real list (receipt or Steam INR retail) — never cart blend %
+          const off =
+            line.listAmount != null && line.listAmount > line.amount
+              ? Math.round((1 - line.amount / line.listAmount) * 100)
+              : null;
+          const body = (
+            <>
+              <SteamThumb
+                appId={line.appId}
+                name={line.title}
+                variant="portrait"
+                artwork={artwork}
+              />
+              <div className="month-purchase-body">
+                <div className="month-purchase-top">
+                  {off != null && off > 0 ? (
+                    <span className="deal-chip sale">−{off}%</span>
+                  ) : (
+                    <span className="deal-chip muted-chip">Paid</span>
+                  )}
+                  <span className="month-purchase-date">{line.date}</span>
+                </div>
+                <h4>{line.title}</h4>
+                <div className="month-purchase-prices">
+                  {line.listAmount != null && line.listAmount > line.amount ? (
+                    <span className="month-purchase-list mono">
+                      {money(line.listAmount)}
+                    </span>
+                  ) : null}
+                  <strong className="mono amber">{money(line.amount)}</strong>
+                </div>
+              </div>
+            </>
+          );
+          if (line.appId) {
+            return (
+              <a
+                key={`${line.title}-${line.date}-${idx}`}
+                className="month-purchase-card"
+                href={steamStoreUrl(line.appId)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {body}
+              </a>
+            );
+          }
+          return (
+            <div
+              key={`${line.title}-${line.date}-${idx}`}
+              className="month-purchase-card"
+            >
+              {body}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -479,6 +647,7 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
     "best",
   );
   const [cphLimit, setCphLimit] = useState(12);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
 
   const titleCatalog = useMemo(
     () => [
@@ -506,17 +675,6 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
     return list.slice(0, 18);
   }, [valuation.games, filter]);
 
-  const biggestWithArt = useMemo(() => {
-    return spending.biggestPurchases.slice(0, 8).map((p) => {
-      const title = p.items[0] ?? "Purchase";
-      return {
-        ...p,
-        title,
-        appId: resolveSteamAppId(title, titleCatalog),
-      };
-    });
-  }, [spending.biggestPurchases, titleCatalog]);
-
   const cphFullList = useMemo(() => {
     if (cphView === "unplayed") return costPerHour.unplayedPaid;
     if (cphView === "worst") return [...costPerHour.playedPaid].reverse();
@@ -529,6 +687,11 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
   const cphMaxHours = useMemo(
     () => Math.max(1, ...costPerHour.playedPaid.map((g) => g.hours)),
     [costPerHour.playedPaid],
+  );
+
+  const selectedMonthRow = useMemo(
+    () => spending.monthly.find((m) => m.month === selectedMonth) ?? null,
+    [spending.monthly, selectedMonth],
   );
 
   return (
@@ -733,40 +896,22 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
         </div>
       </section>
 
-      <section className="spend-section">
-        <div className="spend-section-head">
-          <div>
-            <h3>Biggest library purchases</h3>
-            <p>High-ticket checkouts that shaped your shelf.</p>
-          </div>
-        </div>
-        <div className="purchase-rail">
-          {biggestWithArt.map((p) => (
-            <div key={`${p.date}-${p.title}`} className="purchase-chip-card">
-              <SteamThumb appId={p.appId} name={p.title} artwork={artwork} />
-              <div>
-                <strong>{p.title}</strong>
-                {p.items.length > 1 ? (
-                  <small>+{p.items.length - 1} more in checkout</small>
-                ) : (
-                  <small>{p.date}</small>
-                )}
-              </div>
-              <span className="mono amber">{money(p.total)}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
       <div className="two-col signal-grid spend-secondary">
         <section className="spend-section panel-glass">
           <div className="spend-section-head">
             <div>
               <h3>Spend by month</h3>
-              <p>What left the wallet over time</p>
+              <p>Click a month to see titles, prices, and discounts</p>
             </div>
           </div>
-          <MonthRail rows={spending.monthly} money={money} />
+          <MonthRail
+            rows={spending.monthly}
+            money={money}
+            selectedMonth={selectedMonth}
+            onSelectMonth={(month) =>
+              setSelectedMonth((prev) => (prev === month ? null : month))
+            }
+          />
         </section>
 
         <section className="spend-section panel-glass">
@@ -779,6 +924,18 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
           <PaymentStack methods={spending.paymentMethods} money={money} />
         </section>
       </div>
+
+      {selectedMonthRow ? (
+        <MonthPurchasePanel
+          month={selectedMonthRow.month}
+          spent={selectedMonthRow.spent}
+          lines={selectedMonthRow.lines}
+          money={money}
+          artwork={artwork}
+          titleCatalog={titleCatalog}
+          onClose={() => setSelectedMonth(null)}
+        />
+      ) : null}
 
       <details className="spend-details">
         <summary>More ledger detail</summary>

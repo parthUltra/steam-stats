@@ -1,5 +1,6 @@
 import { loadLocalAccountData } from "@/lib/data/load-local";
 import {
+  applySteamInrListPrices,
   buildSpendingAnalytics,
   libraryTitlesForValuation,
 } from "@/lib/analytics/spending";
@@ -149,6 +150,9 @@ export async function buildDashboard(options?: {
       limit: priceLimit,
     });
   }
+
+  // Month-detail full prices: Steam INR list (cc=IN), never USD×FX
+  applySteamInrListPrices(spending.monthly, priceCache.quotes);
 
   const quoteAppIds = Object.values(priceCache.quotes)
     .map((q) => q.steamAppId)

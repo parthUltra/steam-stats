@@ -12,6 +12,8 @@ export type GamePriceQuote = {
   currentUsd: number | null;
   lowestUsd: number | null;
   currentInr: number | null;
+  /** Steam store list price in INR (cc=IN price_overview.initial) — never FX from USD */
+  retailInr: number | null;
   retailUsd: number | null;
   onSale: boolean;
   source: "steam+cheapshark" | "steam" | "unresolved";
@@ -114,7 +116,10 @@ async function steamStoreSearch(title: string): Promise<StoreSearchItem | null> 
   return null;
 }
 
-async function steamPrice(appId: number, cc: string): Promise<number | null> {
+async function steamPriceOverview(
+  appId: number,
+  cc: string,
+): Promise<{ final: number; initial: number } | null> {
   const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&cc=${cc}&filters=price_overview`;
   const data = await steamRateLimiter.schedule(() =>
     fetchJson<
@@ -122,7 +127,9 @@ async function steamPrice(appId: number, cc: string): Promise<number | null> {
         string,
         {
           success?: boolean;
-          data?: { price_overview?: { final?: number } };
+          data?: {
+            price_overview?: { final?: number; initial?: number };
+          };
         }
       >
     >(url),
@@ -132,7 +139,15 @@ async function steamPrice(appId: number, cc: string): Promise<number | null> {
   const overview = entry.data?.price_overview;
   // No price_overview → delisted / unavailable (not a free ₹0 listing)
   if (!overview || overview.final == null) return null;
-  return overview.final / 100;
+  const final = overview.final / 100;
+  const initial =
+    overview.initial != null ? overview.initial / 100 : final;
+  return { final, initial };
+}
+
+async function steamPrice(appId: number, cc: string): Promise<number | null> {
+  const overview = await steamPriceOverview(appId, cc);
+  return overview?.final ?? null;
 }
 
 type CheapSharkGame = {
@@ -169,6 +184,7 @@ function unresolvedQuote(title: string): GamePriceQuote {
     currentUsd: null,
     lowestUsd: null,
     currentInr: null,
+    retailInr: null,
     retailUsd: null,
     onSale: false,
     source: "unresolved",
@@ -186,11 +202,13 @@ async function refreshOneTitle(title: string): Promise<GamePriceQuote> {
         ? hit.price.final / 100
         : await steamPrice(hit.id, "us");
 
-    const [currentInr, lowestUsd] = await Promise.all([
-      steamPrice(hit.id, "in"),
+    const [inOverview, lowestUsd] = await Promise.all([
+      steamPriceOverview(hit.id, "in"),
       cheapSharkLowest(hit.id),
     ]);
 
+    const currentInr = inOverview?.final ?? null;
+    const retailInr = inOverview?.initial ?? null;
     const retailUsd =
       hit.price != null ? hit.price.initial / 100 : currentUsd;
 
@@ -200,11 +218,14 @@ async function refreshOneTitle(title: string): Promise<GamePriceQuote> {
       currentUsd,
       lowestUsd: lowestUsd ?? currentUsd,
       currentInr,
+      retailInr,
       retailUsd,
       onSale:
-        retailUsd != null && currentUsd != null
-          ? currentUsd < retailUsd
-          : false,
+        retailInr != null && currentInr != null
+          ? currentInr < retailInr
+          : retailUsd != null && currentUsd != null
+            ? currentUsd < retailUsd
+            : false,
       source: lowestUsd != null ? "steam+cheapshark" : "steam",
       updatedAt: new Date().toISOString(),
     };
@@ -247,7 +268,9 @@ async function refreshPricesForTitlesUnlocked(
       !opts?.force &&
       existing &&
       existing.updatedAt &&
-      now - Date.parse(existing.updatedAt) < maxAgeMs
+      now - Date.parse(existing.updatedAt) < maxAgeMs &&
+      // Backfill INR list prices once for caches that only had USD retail
+      (existing.steamAppId == null || existing.retailInr != null)
     ) {
       continue;
     }
