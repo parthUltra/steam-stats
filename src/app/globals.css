@@ -627,11 +627,11 @@ h3,
   inset: 0;
   background: linear-gradient(
     180deg,
-    transparent 42%,
-    rgba(6, 10, 14, 0.72) 100%
+    transparent 55%,
+    rgba(6, 10, 14, 0.75) 100%
   );
   pointer-events: none;
-  opacity: 0.9;
+  opacity: 0;
   transition: opacity 0.2s ease;
 }
 
@@ -657,9 +657,11 @@ h3,
   font-weight: 700;
   color: #3ee0d5;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
-  opacity: 0.95;
-  transform: none;
-  transition: opacity 0.2s ease;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 .pano-tile-name {
@@ -670,9 +672,11 @@ h3,
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  opacity: 0.95;
-  transform: none;
-  transition: opacity 0.2s ease;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
 }
 
@@ -681,6 +685,7 @@ h3,
 .pano-tile:focus-visible .pano-tile-hours,
 .pano-tile:focus-visible .pano-tile-name {
   opacity: 1;
+  transform: translateY(0);
 }
 
 @media (max-width: 720px) {
@@ -690,14 +695,8 @@ h3,
     max-height: min(48vh, 420px);
   }
 
-  .pano-tile-shade {
-    opacity: 0.95;
-  }
-
   .pano-tile-hours,
   .pano-tile-name {
-    opacity: 1;
-    transform: none;
     font-size: 0.55rem;
   }
 }
