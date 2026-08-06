@@ -10,9 +10,15 @@ import { Button } from "@/components/ui/button";
 /** Panorama only includes titles with at least 30 minutes on record. */
 const MIN_PANO_HOURS = 0.5;
 
-/** Wide one-screen mosaic (~2.4∶1). */
-const COLS = 24;
-const ROWS = 10;
+/** Base mosaic density (~2.4∶1). Grown with library size so 1-cell tiles stay small. */
+const BASE_COLS = 48;
+const BASE_ROWS = 20;
+/** Aim for this many cells per title so playtime can still scale above 1×1. */
+const CELLS_PER_TITLE = 5;
+const MAX_COLS = 96;
+const MAX_ROWS = 40;
+/** Longest∶shortest side for any tile (grid cells). Keeps art readable. */
+const MAX_ASPECT = 2.5;
 
 type Orientation = "portrait" | "landscape";
 
@@ -34,15 +40,114 @@ type Weighted = {
   weight: number;
 };
 
-/** Playtime → layout weight. Stronger curve so top titles read clearly larger. */
+/** Playtime → layout weight. Curve keeps big titles dominant without flattening the long tail. */
 function weightFor(hours: number): number {
-  return Math.pow(Math.max(hours, MIN_PANO_HOURS), 0.55);
+  return Math.pow(Math.max(hours, MIN_PANO_HOURS), 0.62);
+}
+
+function gridForCount(n: number): { cols: number; rows: number } {
+  const target = Math.max(BASE_COLS * BASE_ROWS, n * CELLS_PER_TITLE);
+  let cols = Math.max(BASE_COLS, Math.ceil(Math.sqrt(target * 2.4)));
+  let rows = Math.max(BASE_ROWS, Math.ceil(target / cols));
+  cols = Math.min(cols, MAX_COLS);
+  rows = Math.min(rows, MAX_ROWS);
+  while (cols * rows < n) {
+    if (cols < MAX_COLS) cols += 2;
+    else rows += 1;
+  }
+  return { cols, rows };
+}
+
+/** Longest∶shortest side ratio for a w×h rect. */
+function regionAspect(colSpan: number, rowSpan: number) {
+  const a = Math.max(colSpan, 1);
+  const b = Math.max(rowSpan, 1);
+  return Math.max(a / b, b / a);
+}
+
+function pushTile(
+  out: Tile[],
+  g: Weighted,
+  col: number,
+  row: number,
+  colSpan: number,
+  rowSpan: number,
+) {
+  const w = Math.max(1, colSpan);
+  const h = Math.max(1, rowSpan);
+  out.push({
+    appId: g.appId,
+    name: g.name,
+    hours: g.hours,
+    col: col + 1,
+    row: row + 1,
+    colSpan: w,
+    rowSpan: h,
+    orientation: w >= h ? "landscape" : "portrait",
+  });
+}
+
+/** Integer sizes proportional to weights; exact sum. */
+function splitByWeight(weights: number[], total: number): number[] {
+  if (weights.length === 0) return [];
+  if (weights.length === 1) return [Math.max(1, total)];
+  const sumW = weights.reduce((a, b) => a + b, 0) || 1;
+  const raw = weights.map((w) => (w / sumW) * total);
+  const sizes = raw.map((v) => Math.max(1, Math.floor(v)));
+  let used = sizes.reduce((a, b) => a + b, 0);
+  // Fix sum — give leftovers to largest fractional remainders
+  const order = raw
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac);
+  let oi = 0;
+  while (used < total && oi < order.length * total) {
+    sizes[order[oi % order.length]!.i]! += 1;
+    used += 1;
+    oi += 1;
+  }
+  while (used > total) {
+    for (let i = sizes.length - 1; i >= 0 && used > total; i--) {
+      if (sizes[i]! > 1) {
+        sizes[i]! -= 1;
+        used -= 1;
+      }
+    }
+    if (sizes.every((s) => s <= 1) && used > total) break;
+  }
+  return sizes;
 }
 
 /**
- * Recursive bipartition treemap — zero gaps, most-played always top/left.
+ * Worst aspect ratio if `row` is laid out as a strip of fixed side `length`
+ * inside a remaining area whose total value is `area` (weight units scale).
  */
-function layoutTreemap(
+function worstAspect(
+  row: Weighted[],
+  length: number,
+  rowWeight: number,
+  totalWeight: number,
+  area: number,
+): number {
+  if (!row.length || length < 1 || rowWeight <= 0 || totalWeight <= 0) {
+    return Infinity;
+  }
+  const rowArea = (rowWeight / totalWeight) * area;
+  const depth = rowArea / length;
+  if (depth <= 0) return Infinity;
+  let worst = 1;
+  for (const g of row) {
+    const side = (g.weight / rowWeight) * length;
+    const ar = Math.max(side / depth, depth / Math.max(side, 1e-9));
+    if (ar > worst) worst = ar;
+  }
+  return worst;
+}
+
+/**
+ * Squarified treemap — every cell covered, no holes. Prefers aspects near 1;
+ * stays within MAX_ASPECT when the remaining rect allows.
+ */
+function layoutSquarified(
   items: Weighted[],
   col: number,
   row: number,
@@ -53,164 +158,198 @@ function layoutTreemap(
   if (!items.length || colSpan < 1 || rowSpan < 1) return;
 
   if (items.length === 1) {
-    const g = items[0]!;
-    out.push({
-      appId: g.appId,
-      name: g.name,
-      hours: g.hours,
-      col: col + 1,
-      row: row + 1,
-      colSpan,
-      rowSpan,
-      orientation: colSpan >= rowSpan ? "landscape" : "portrait",
-    });
+    pushTile(out, items[0]!, col, row, colSpan, rowSpan);
     return;
   }
 
   const area = colSpan * rowSpan;
   if (area <= items.length) {
-    packRowMajor(items, col, row, colSpan, rowSpan, out);
+    // One cell each — covers fully, aspect 1
+    const n = Math.min(items.length, area);
+    for (let i = 0; i < n; i++) {
+      const rr = Math.floor(i / colSpan);
+      const cc = i % colSpan;
+      if (rr >= rowSpan) break;
+      pushTile(out, items[i]!, col + cc, row + rr, 1, 1);
+    }
     return;
   }
 
-  const total = items.reduce((s, g) => s + g.weight, 0);
+  const totalWeight = items.reduce((s, g) => s + g.weight, 0);
+  const vertical = colSpan < rowSpan; // strip across the shorter side
+  const length = vertical ? colSpan : rowSpan;
 
-  // Split near half weight so blocks stay squarish; heavier prefix → top/left.
-  let acc = 0;
-  let splitAt = 1;
-  for (let i = 0; i < items.length - 1; i++) {
-    acc += items[i]!.weight;
-    splitAt = i + 1;
-    if (acc >= total * 0.5) break;
+  let rowItems: Weighted[] = [];
+  let rowWeight = 0;
+  let idx = 0;
+
+  const accept = (next: Weighted) => {
+    const trial = rowItems.concat(next);
+    const trialW = rowWeight + next.weight;
+    if (!rowItems.length) return true;
+    return (
+      worstAspect(trial, length, trialW, totalWeight, area) <=
+      worstAspect(rowItems, length, rowWeight, totalWeight, area)
+    );
+  };
+
+  while (idx < items.length) {
+    const g = items[idx]!;
+    if (accept(g)) {
+      rowItems.push(g);
+      rowWeight += g.weight;
+      idx += 1;
+      continue;
+    }
+    break;
   }
 
-  let head = items.slice(0, splitAt);
-  let tail = items.slice(splitAt);
-  const splitVertical = colSpan >= rowSpan;
+  if (!rowItems.length) {
+    rowItems = [items[0]!];
+    rowWeight = items[0]!.weight;
+    idx = 1;
+  }
 
-  if (splitVertical) {
-    let headCols = Math.round(
-      (head.reduce((s, g) => s + g.weight, 0) / total) * colSpan,
+  const rest = items.slice(idx);
+  // Depth of this strip in cells
+  let depth = Math.round((rowWeight / totalWeight) * (vertical ? rowSpan : colSpan));
+  const minRest = rest.length > 0 ? 1 : 0;
+  const maxSide = vertical ? rowSpan : colSpan;
+  depth = Math.max(1, Math.min(depth, maxSide - minRest));
+  if (rest.length === 0) depth = maxSide;
+
+  if (vertical) {
+    // Horizontal strip: full width, `depth` rows — stack items left→right
+    const widths = splitByWeight(
+      rowItems.map((g) => g.weight),
+      colSpan,
     );
-    headCols = Math.max(
-      Math.ceil(head.length / rowSpan),
-      Math.min(headCols, colSpan - Math.ceil(tail.length / rowSpan)),
-    );
-    headCols = Math.max(1, Math.min(headCols, colSpan - 1));
-
-    // If constraint forces an impossible split, rebalance item counts
-    while (
-      head.length > rowSpan * headCols &&
-      tail.length > 0
-    ) {
-      // shouldn't happen with ceil math; rebalance by moving last head → tail
-      const moved = head.pop();
-      if (moved) tail = [moved, ...tail];
-      else break;
-      headCols = Math.max(
-        Math.ceil(head.length / rowSpan),
-        Math.min(
-          colSpan - Math.ceil(tail.length / rowSpan),
-          colSpan - 1,
-        ),
-      );
+    let x = 0;
+    for (let i = 0; i < rowItems.length; i++) {
+      const w = widths[i]!;
+      pushTile(out, rowItems[i]!, col + x, row, w, depth);
+      x += w;
     }
-    while (tail.length > rowSpan * (colSpan - headCols) && head.length > 0) {
-      const moved = tail.shift();
-      if (moved) head = [...head, moved];
-      else break;
-      headCols = Math.min(
-        colSpan - 1,
-        Math.max(
-          Math.ceil(head.length / rowSpan),
-          colSpan - Math.ceil(tail.length / rowSpan),
-        ),
-      );
+    if (rest.length) {
+      layoutSquarified(rest, col, row + depth, colSpan, rowSpan - depth, out);
     }
-
-    if (
-      head.length > headCols * rowSpan ||
-      tail.length > (colSpan - headCols) * rowSpan
-    ) {
-      packRowMajor(items, col, row, colSpan, rowSpan, out);
-      return;
-    }
-
-    layoutTreemap(head, col, row, headCols, rowSpan, out);
-    layoutTreemap(tail, col + headCols, row, colSpan - headCols, rowSpan, out);
   } else {
-    let headRows = Math.round(
-      (head.reduce((s, g) => s + g.weight, 0) / total) * rowSpan,
+    // Vertical strip: full height, `depth` cols — stack items top→bottom
+    const heights = splitByWeight(
+      rowItems.map((g) => g.weight),
+      rowSpan,
     );
-    headRows = Math.max(
-      Math.ceil(head.length / colSpan),
-      Math.min(headRows, rowSpan - Math.ceil(tail.length / colSpan)),
-    );
-    headRows = Math.max(1, Math.min(headRows, rowSpan - 1));
-
-    while (head.length > colSpan * headRows && tail.length > 0) {
-      const moved = head.pop();
-      if (moved) tail = [moved, ...tail];
-      else break;
-      headRows = Math.max(
-        Math.ceil(head.length / colSpan),
-        Math.min(
-          rowSpan - Math.ceil(tail.length / colSpan),
-          rowSpan - 1,
-        ),
-      );
+    let y = 0;
+    for (let i = 0; i < rowItems.length; i++) {
+      const h = heights[i]!;
+      pushTile(out, rowItems[i]!, col, row + y, depth, h);
+      y += h;
     }
-    while (tail.length > colSpan * (rowSpan - headRows) && head.length > 0) {
-      const moved = tail.shift();
-      if (moved) head = [...head, moved];
-      else break;
-      headRows = Math.min(
-        rowSpan - 1,
-        Math.max(
-          Math.ceil(head.length / colSpan),
-          rowSpan - Math.ceil(tail.length / colSpan),
-        ),
-      );
+    if (rest.length) {
+      layoutSquarified(rest, col + depth, row, colSpan - depth, rowSpan, out);
     }
-
-    if (
-      head.length > headRows * colSpan ||
-      tail.length > (rowSpan - headRows) * colSpan
-    ) {
-      packRowMajor(items, col, row, colSpan, rowSpan, out);
-      return;
-    }
-
-    layoutTreemap(head, col, row, colSpan, headRows, out);
-    layoutTreemap(tail, col, row + headRows, colSpan, rowSpan - headRows, out);
   }
 }
 
-/** 1×1 reading-order fallback when a region is too tight to split. */
-function packRowMajor(
-  items: Weighted[],
-  col: number,
-  row: number,
-  colSpan: number,
-  rowSpan: number,
-  out: Tile[],
-) {
-  const area = colSpan * rowSpan;
-  items.slice(0, area).forEach((g, i) => {
-    const rr = Math.floor(i / colSpan);
-    const cc = i % colSpan;
-    if (rr >= rowSpan) return;
-    out.push({
-      appId: g.appId,
-      name: g.name,
-      hours: g.hours,
-      col: col + cc + 1,
-      row: row + rr + 1,
-      colSpan: 1,
-      rowSpan: 1,
-      orientation: "landscape",
-    });
-  });
+/**
+ * If any cell is uncovered (rounding edge cases), grow a neighbor tile into it.
+ * Prefers expansions that stay ≤ MAX_ASPECT; forces fill if needed so no gaps.
+ */
+function sealGaps(tiles: Tile[], cols: number, rows: number): Tile[] {
+  if (!tiles.length) return tiles;
+  const owner: number[][] = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => -1),
+  );
+  const list = tiles.map((t) => ({ ...t }));
+
+  const paint = (ti: number) => {
+    const t = list[ti]!;
+    for (let r = t.row - 1; r < t.row - 1 + t.rowSpan; r++) {
+      for (let c = t.col - 1; c < t.col - 1 + t.colSpan; c++) {
+        if (r >= 0 && r < rows && c >= 0 && c < cols) owner[r]![c] = ti;
+      }
+    }
+  };
+  list.forEach((_, i) => paint(i));
+
+  const tryExpand = (ti: number, c0: number, r0: number, force: boolean) => {
+    const t = list[ti]!;
+    const nc0 = Math.min(t.col - 1, c0);
+    const nr0 = Math.min(t.row - 1, r0);
+    const nc1 = Math.max(t.col - 1 + t.colSpan - 1, c0);
+    const nr1 = Math.max(t.row - 1 + t.rowSpan - 1, r0);
+    const nw = nc1 - nc0 + 1;
+    const nh = nr1 - nr0 + 1;
+    if (!force && regionAspect(nw, nh) > MAX_ASPECT + 0.001) return false;
+    // Must not overlap a different owner
+    for (let r = nr0; r <= nr1; r++) {
+      for (let c = nc0; c <= nc1; c++) {
+        const o = owner[r]![c]!;
+        if (o !== -1 && o !== ti) return false;
+      }
+    }
+    t.col = nc0 + 1;
+    t.row = nr0 + 1;
+    t.colSpan = nw;
+    t.rowSpan = nh;
+    t.orientation = nw >= nh ? "landscape" : "portrait";
+    paint(ti);
+    return true;
+  };
+
+  for (const force of [false, true]) {
+    let guard = cols * rows + 2;
+    while (guard-- > 0) {
+      let empty: { c: number; r: number } | null = null;
+      outer: for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (owner[r]![c] === -1) {
+            empty = { c, r };
+            break outer;
+          }
+        }
+      }
+      if (!empty) break;
+
+      const neighbors: number[] = [];
+      for (const [dc, dr] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as const) {
+        const rr = empty.r + dr;
+        const cc = empty.c + dc;
+        if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) continue;
+        const o = owner[rr]![cc]!;
+        if (o >= 0 && !neighbors.includes(o)) neighbors.push(o);
+      }
+      // Prefer larger tiles / better aspect after expand
+      neighbors.sort((a, b) => {
+        const ta = list[a]!;
+        const tb = list[b]!;
+        return tb.colSpan * tb.rowSpan - ta.colSpan * ta.rowSpan;
+      });
+
+      let filled = false;
+      for (const ti of neighbors) {
+        if (tryExpand(ti, empty.c, empty.r, force)) {
+          filled = true;
+          break;
+        }
+      }
+      if (!filled && neighbors.length) {
+        tryExpand(neighbors[0]!, empty.c, empty.r, true);
+        filled = true;
+      }
+      if (!filled) {
+        // No neighbor (shouldn't happen mid-grid) — skip to avoid infinite loop
+        owner[empty.r]![empty.c] = -2;
+      }
+    }
+  }
+
+  return list;
 }
 
 function buildTiles(
@@ -221,13 +360,7 @@ function buildTiles(
     .sort((a, b) => b.hoursForever - a.hoursForever);
   if (!played.length) return [];
 
-  // Grow the grid only if we have more titles than cells (keep it one screen).
-  let cols = COLS;
-  let rows = ROWS;
-  while (cols * rows < played.length) {
-    cols += 2;
-    rows += 1;
-  }
+  const { cols, rows } = gridForCount(played.length);
 
   const items: Weighted[] = played.map((g) => ({
     appId: g.appId,
@@ -237,8 +370,8 @@ function buildTiles(
   }));
 
   const out: Tile[] = [];
-  layoutTreemap(items, 0, 0, cols, rows, out);
-  return out;
+  layoutSquarified(items, 0, 0, cols, rows, out);
+  return sealGaps(out, cols, rows);
 }
 
 function gridSize(tiles: Tile[]): { cols: number; rows: number } {
@@ -264,10 +397,34 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
 async function loadTileImage(
   tile: Tile,
   artwork?: Record<string, ArtworkUrls>,
+  opts?: { highRes?: boolean },
 ): Promise<HTMLImageElement | null> {
   const kind = tile.orientation === "portrait" ? "library" : "header";
-  const candidates = expandedArtCandidates(tile.appId, kind, artwork);
-  for (const url of candidates) {
+  const base = expandedArtCandidates(tile.appId, kind, artwork);
+  const hiRes =
+    kind === "library"
+      ? [
+          `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${tile.appId}/library_600x900_2x.jpg`,
+          `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${tile.appId}/library_600x900.jpg`,
+        ]
+      : [
+          `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${tile.appId}/header_2x.jpg`,
+          `https://cdn.cloudflare.steamstatic.com/steam/apps/${tile.appId}/header_2x.jpg`,
+        ];
+
+  const candidates = opts?.highRes
+    ? [...hiRes, ...base].filter((u, i, arr) => arr.indexOf(u) === i)
+    : base;
+
+  // Prefer already-hashed 2× / large assets when exporting
+  const ordered = opts?.highRes
+    ? [
+        ...candidates.filter((u) => /_2x|600x900/i.test(u)),
+        ...candidates,
+      ].filter((u, i, arr) => arr.indexOf(u) === i)
+    : candidates;
+
+  for (const url of ordered) {
     const img = await loadImage(proxiedArtUrl(url));
     if (img) return img;
   }
@@ -305,30 +462,51 @@ function drawCover(
   ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
 }
 
+function exportCanvasSize(cols: number, rows: number): {
+  width: number;
+  height: number;
+} {
+  /** ~128px per grid cell → crisp on 4K/5K and print-ish at large libraries. */
+  const MIN_CELL = 128;
+  const MAX_EDGE = 8192;
+  let width = Math.max(3840, cols * MIN_CELL);
+  let height = Math.round(width * (rows / cols));
+  if (width > MAX_EDGE) {
+    width = MAX_EDGE;
+    height = Math.round(width * (rows / cols));
+  }
+  if (height > MAX_EDGE) {
+    height = MAX_EDGE;
+    width = Math.round(height * (cols / rows));
+  }
+  return { width, height: Math.max(1, height) };
+}
+
 async function downloadPanorama(
   tiles: Tile[],
   cols: number,
   rows: number,
   artwork?: Record<string, ArtworkUrls>,
 ) {
-  const GAP = 4;
-  const WIDTH = 2400;
-  const exportH = Math.round(WIDTH * (rows / cols));
+  const { width: WIDTH, height: exportH } = exportCanvasSize(cols, rows);
+  const GAP = Math.max(2, Math.round(WIDTH / 2400));
   const cW = (WIDTH - GAP * (cols - 1)) / cols;
   const cH = (exportH - GAP * (rows - 1)) / rows;
-  const radius = 6;
+  const radius = Math.max(2, Math.round(Math.min(cW, cH) * 0.06));
 
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
-  canvas.height = Math.max(1, exportH);
+  canvas.height = exportH;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas unsupported");
 
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.fillStyle = "#0a0e14";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const images = await Promise.all(
-    tiles.map((tile) => loadTileImage(tile, artwork)),
+    tiles.map((tile) => loadTileImage(tile, artwork, { highRes: true })),
   );
 
   for (let i = 0; i < tiles.length; i++) {
@@ -469,6 +647,8 @@ export function PlaytimePanorama({
         className="pano-wall"
         role="list"
         style={{
+          ["--pano-cols" as string]: cols,
+          ["--pano-rows" as string]: rows,
           gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
         }}

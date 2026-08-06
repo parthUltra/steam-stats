@@ -558,14 +558,19 @@ h3,
 
 .pano-wall {
   display: grid;
-  gap: 3px;
-  width: 100%;
+  gap: 2px;
+  width: min(
+    100%,
+    calc(min(58vh, 560px) * var(--pano-cols, 48) / var(--pano-rows, 20))
+  );
   max-width: 100%;
-  height: min(58vh, 560px);
+  height: auto;
   max-height: min(58vh, 560px);
+  aspect-ratio: var(--pano-cols, 48) / var(--pano-rows, 20);
   overflow: hidden;
   border-radius: 10px;
   padding: 0;
+  margin-inline: auto;
 }
 
 .pano-tile {
@@ -573,12 +578,12 @@ h3,
   display: block;
   min-width: 0;
   min-height: 0;
-  border-radius: 7px;
+  border-radius: 3px;
   overflow: hidden;
   text-decoration: none;
   color: inherit;
   background: #0c1016;
-  box-shadow: inset 0 0 0 1px rgba(102, 192, 244, 0.14);
+  box-shadow: none;
   animation: panoIn 0.5s ease both;
   transition:
     transform 0.22s ease,
@@ -691,8 +696,11 @@ h3,
 @media (max-width: 720px) {
   .pano-wall {
     gap: 2px;
-    height: min(48vh, 420px);
     max-height: min(48vh, 420px);
+    width: min(
+      100%,
+      calc(min(48vh, 420px) * var(--pano-cols, 48) / var(--pano-rows, 20))
+    );
   }
 
   .pano-tile-hours,
