@@ -65,20 +65,46 @@ type StoreSearchItem = {
 };
 
 async function steamStoreSearch(title: string): Promise<StoreSearchItem | null> {
-  const url = `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`;
-  const data = await fetchJson<{ total: number; items: StoreSearchItem[] }>(url);
-  if (!data?.items?.length) return null;
-  const apps = data.items.filter((i) => i.type === "app");
-  const pool = apps.length ? apps : data.items;
-  const norm = normalizeTitle(title);
-  return (
-    pool.find((g) => normalizeTitle(g.name) === norm) ??
-    pool.find((g) => normalizeTitle(g.name).startsWith(norm)) ??
-    pool.find((g) => normalizeTitle(g.name).includes(norm)) ??
-    pool.find((g) => norm.includes(normalizeTitle(g.name))) ??
-    pool[0] ??
-    null
-  );
+  const queries = [
+    title,
+    title.replace(/\s*[-–—]\s*/g, " "),
+    title.replace(/\s*[-–—]\s*/g, ": "),
+  ];
+  const seen = new Set<string>();
+
+  for (const q of queries) {
+    const term = q.trim();
+    if (!term || seen.has(term.toLowerCase())) continue;
+    seen.add(term.toLowerCase());
+
+    const url = `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(term)}&l=english&cc=US`;
+    const data = await fetchJson<{ total: number; items: StoreSearchItem[] }>(
+      url,
+    );
+    if (!data?.items?.length) continue;
+
+    const apps = data.items.filter((i) => i.type === "app");
+    const pool = apps.length ? apps : data.items;
+    const norm = normalizeTitle(title);
+    const loose = (t: string) =>
+      normalizeTitle(t)
+        .replace(/[-–—:]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const looseNorm = loose(title);
+
+    const hit =
+      pool.find((g) => normalizeTitle(g.name) === norm) ??
+      pool.find((g) => loose(g.name) === looseNorm) ??
+      pool.find((g) => normalizeTitle(g.name).startsWith(norm)) ??
+      pool.find((g) => normalizeTitle(g.name).includes(norm)) ??
+      pool.find((g) => norm.includes(normalizeTitle(g.name))) ??
+      pool[0] ??
+      null;
+    if (hit) return hit;
+  }
+
+  return null;
 }
 
 async function steamPrice(appId: number, cc: string): Promise<number | null> {

@@ -191,6 +191,11 @@ export async function buildDashboard(options?: {
       g.steamAppId = resolveSteamAppId(g.title, idSources);
     }
   }
+  for (const g of valuation.giftsSentGames) {
+    if (g.steamAppId == null) {
+      g.steamAppId = resolveSteamAppId(g.title, idSources);
+    }
+  }
 
   const artworkAppIds = [
     ...playedGames.map((g) => g.appId),

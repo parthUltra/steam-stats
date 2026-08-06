@@ -590,7 +590,7 @@ export function SpendingValue({
             </span>
           </div>
           <div className="purchase-rail">
-            {(valuation.giftsSentGames ?? []).slice(0, 8).map((g) => (
+            {(valuation.giftsSentGames ?? []).map((g) => (
               <div key={g.title} className="purchase-chip-card">
                 <SteamThumb appId={g.steamAppId} name={g.title} artwork={artwork} />
                 <div>

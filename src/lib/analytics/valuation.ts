@@ -221,11 +221,27 @@ function findQuote(
   title: string,
 ): GamePriceQuote | undefined {
   const key = norm(title);
-  if (priceCache.quotes[key]) return priceCache.quotes[key];
-  for (const [k, q] of Object.entries(priceCache.quotes)) {
-    if (k.includes(key) || key.includes(k)) return q;
+  const exact = priceCache.quotes[key];
+  if (exact?.steamAppId != null && exact.source !== "unresolved") {
+    return exact;
   }
-  return undefined;
+
+  // Punctuation-tolerant match ("Brotato - DLC" ↔ "Brotato: DLC") without
+  // grabbing a shorter base-game quote via substring includes.
+  const loose = (t: string) =>
+    norm(t)
+      .replace(/[-–—:]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const looseKey = loose(title);
+
+  for (const [k, q] of Object.entries(priceCache.quotes)) {
+    if (q.steamAppId == null || q.source === "unresolved") continue;
+    if (loose(k) === looseKey || loose(q.title) === looseKey) return q;
+  }
+
+  // Keep an exact unresolved row so the title stays visible for gift/DLC fold
+  return exact;
 }
 
 function giftSentTitles(purchases: PurchaseHistoryRow[]): string[] {
@@ -472,7 +488,24 @@ export function foldDlcIntoParents(
     byApp.delete(appId);
   }
 
-  return [...byApp.values(), ...unresolved];
+  // Unresolved rows (no Steam app id) still fold into a known parent by title
+  // e.g. "Brotato - Abyssal Terrors" → Brotato when price search failed.
+  const stillUnresolved: ValuationGame[] = [];
+  for (const g of unresolved) {
+    const parentId = inferParentFromLibrary(g, [...byApp.values()]);
+    if (parentId == null) {
+      stillUnresolved.push(g);
+      continue;
+    }
+    const parent = byApp.get(parentId);
+    if (!parent) {
+      stillUnresolved.push(g);
+      continue;
+    }
+    byApp.set(parentId, mergeIntoParent(parent, g));
+  }
+
+  return [...byApp.values(), ...stillUnresolved];
 }
 
 function inferParentFromLibrary(
