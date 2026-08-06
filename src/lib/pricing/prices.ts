@@ -42,7 +42,21 @@ export async function loadPriceCache(): Promise<PriceCache> {
   await ensureDataDir();
   try {
     const raw = await fs.readFile(dataPath(CACHE_FILE), "utf8");
-    return JSON.parse(raw) as PriceCache;
+    const cache = JSON.parse(raw) as PriceCache;
+    // Older builds stored currentUsd as lowestUsd when CheapShark failed —
+    // that made every title look like "no real hist low". Clear those.
+    for (const q of Object.values(cache.quotes ?? {})) {
+      if (
+        q.lowestUsd != null &&
+        q.currentUsd != null &&
+        q.currentUsd > 0 &&
+        q.lowestUsd >= q.currentUsd * 0.98
+      ) {
+        q.lowestUsd = null;
+        if (q.source === "steam+cheapshark") q.source = "steam";
+      }
+    }
+    return cache;
   } catch {
     return { updatedAt: "", quotes: {} };
   }
@@ -163,18 +177,20 @@ async function cheapSharkLowest(steamAppId: number): Promise<number | null> {
       `https://www.cheapshark.com/api/1.0/games?steamAppID=${steamAppId}&limit=5`,
     ),
   );
-  if (!list?.length) return null;
+  if (!Array.isArray(list) || !list.length) return null;
   const game =
     list.find((g) => String(g.steamAppID) === String(steamAppId)) ?? list[0];
+  if (!game?.gameID) return null;
   const detail = await cheapSharkRateLimiter.schedule(() =>
     fetchJson<{
       cheapestPriceEver?: { price?: string };
     }>(`https://www.cheapshark.com/api/1.0/games?id=${game.gameID}`),
   );
-  if (detail?.cheapestPriceEver?.price != null) {
-    return Number(detail.cheapestPriceEver.price);
-  }
-  return Number(game.cheapest);
+  // Only all-time low — never "cheapest right now" (that equals list for most titles)
+  const ever = detail?.cheapestPriceEver?.price;
+  if (ever == null || ever === "") return null;
+  const n = Number(ever);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function unresolvedQuote(title: string): GamePriceQuote {
@@ -216,7 +232,8 @@ async function refreshOneTitle(title: string): Promise<GamePriceQuote> {
       title: hit.name,
       steamAppId: hit.id,
       currentUsd,
-      lowestUsd: lowestUsd ?? currentUsd,
+      // null when CheapShark has no all-time low — never copy currentUsd
+      lowestUsd,
       currentInr,
       retailInr,
       retailUsd,

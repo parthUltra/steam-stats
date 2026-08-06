@@ -171,13 +171,26 @@ function median(values: number[]): number | null {
 export function inferUsdToDisplayRate(priceCache: PriceCache): number | null {
   const ratios: number[] = [];
   for (const q of Object.values(priceCache.quotes)) {
+    // Prefer retail INR/USD when both exist — sale prices skew the FX ratio
+    if (
+      q.retailInr != null &&
+      q.retailInr > 0 &&
+      q.retailUsd != null &&
+      q.retailUsd > 0
+    ) {
+      const r = q.retailInr / q.retailUsd;
+      if (r >= 60 && r <= 100) ratios.push(r);
+      continue;
+    }
     if (
       q.currentUsd != null &&
       q.currentUsd > 0 &&
       q.currentInr != null &&
       q.currentInr > 0
     ) {
-      ratios.push(q.currentInr / q.currentUsd);
+      const r = q.currentInr / q.currentUsd;
+      // Drop sale-skewed pairs (e.g. ₹179 / $7.99 ≈ 22)
+      if (r >= 60 && r <= 100) ratios.push(r);
     }
   }
   return median(ratios);
@@ -206,6 +219,16 @@ function quoteCurrentInCurrency(
   return raw;
 }
 
+/** True all-time low must be meaningfully below the live USD price. */
+function isGenuineHistLow(
+  lowestUsd: number | null | undefined,
+  currentUsd: number | null | undefined,
+): lowestUsd is number {
+  if (lowestUsd == null || lowestUsd <= 0) return false;
+  if (currentUsd == null || currentUsd <= 0) return true;
+  return lowestUsd < currentUsd * 0.98;
+}
+
 function quoteLowestInCurrency(
   quote: GamePriceQuote,
   currency: string,
@@ -216,21 +239,20 @@ function quoteLowestInCurrency(
   const currentUsd =
     quote.currentUsd != null && quote.currentUsd > 0 ? quote.currentUsd : null;
 
-  if (currency === "USD") {
-    return lowestUsd ?? currentLocal ?? currentUsd;
+  if (!isGenuineHistLow(lowestUsd, currentUsd)) {
+    return null;
   }
 
-  if (
-    currentLocal != null &&
-    lowestUsd != null &&
-    currentUsd != null &&
-    currentUsd > 0
-  ) {
+  if (currency === "USD") {
+    return lowestUsd;
+  }
+
+  // Scale USD hist-low by live INR/USD when we have both legs
+  if (currentLocal != null && currentUsd != null && currentUsd > 0) {
     return currentLocal * (lowestUsd / currentUsd);
   }
-  if (lowestUsd != null && usdRate != null) return lowestUsd * usdRate;
-  // Delisted: still use scaled historical low or fall back to null
-  return currentLocal;
+  if (usdRate != null) return lowestUsd * usdRate;
+  return null;
 }
 
 /** Shelf “now” for totals: live price, else historical low when unlisted. */
@@ -312,8 +334,8 @@ function sumShelf(
     titlesResolved += 1;
     const now = effectiveShelfNow(g);
     if (now != null) current += now;
+    // Only sum genuine hist lows — never pad with "now" (that inflated Low ≈ shelf)
     if (g.lowest != null && g.lowest > 0) lowest += g.lowest;
-    else if (now != null) lowest += now;
   }
 
   return { spent, current, lowest, titlesResolved, titlesConsidered };
@@ -350,11 +372,23 @@ function priceGame(
 
   const current = quoteCurrentInCurrency(quote, currency, usdRate);
   let lowest = quoteLowestInCurrency(quote, currency, current, usdRate);
-  // If low is missing but we somehow only have a positive current, mirror it
-  if ((lowest == null || lowest <= 0) && current != null && current > 0) {
+  if (lowest != null && lowest <= 0) lowest = null;
+
+  // CheapShark often has no all-time low (or cache still has currentUsd copied
+  // in). For purchased titles, your paid price is a real floor for "best known".
+  if (
+    lowest == null &&
+    kind === "purchased" &&
+    paid != null &&
+    paid > 0
+  ) {
+    lowest = current != null && current > 0 ? Math.min(paid, current) : paid;
+  }
+
+  // Cap at live price — hist low cannot exceed shelf now
+  if (lowest != null && current != null && lowest > current) {
     lowest = current;
   }
-  if (lowest != null && lowest <= 0) lowest = null;
 
   return {
     title: quote.title,
@@ -675,8 +709,8 @@ export function buildLibraryValuation(
 
   const note =
     usdRate != null && currency !== "USD"
-      ? `Spent is what you paid for your library. Cost basis vs shelf counts one copy per title (extra copies in a multi-buy don’t stack). DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Gifts you sent are separate. Lows use ~${usdRate.toFixed(2)} ${currency}/USD when needed.`
-      : "Spent is what you paid for your library. Cost basis vs shelf counts one copy per title (extra copies in a multi-buy don’t stack). DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Gifts you sent are separate.";
+      ? `Spent is what you paid for your library. Cost basis vs shelf counts one copy per title (extra copies in a multi-buy don’t stack). DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Hist. low prefers CheapShark all-time USD lows (scaled ~${usdRate.toFixed(2)} ${currency}/USD); when unknown, uses what you paid (capped at live). Gifts you sent are separate.`
+      : "Spent is what you paid for your library. Cost basis vs shelf counts one copy per title (extra copies in a multi-buy don’t stack). DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Hist. low prefers CheapShark all-time lows; when unknown, uses what you paid (capped at live). Gifts you sent are separate.";
 
   // Back-compat: excludingGifts ≈ full library shelf; includingGifts ignored for heroes
   const excludingGifts = shelfFull;

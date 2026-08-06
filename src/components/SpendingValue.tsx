@@ -119,7 +119,7 @@ function TelemetryDuel({
           <span className="telemetry-label">Shelf now</span>
           <strong className="telemetry-num cyan">{money(current)}</strong>
           <span className="telemetry-sub">
-            Low {money(lowest)}
+            Best known {money(lowest)}
             {includeUnpaid && unpaidBoost > 0
               ? ` · +${money(unpaidBoost)} unpaid`
               : ""}
@@ -141,7 +141,7 @@ function TelemetryDuel({
         <div className="tug-legend">
           <span className="amber">Paid</span>
           <span className="cyan">Market now</span>
-          <span className="rose">Hist. low {money(lowest)}</span>
+          <span className="rose">Best known {money(lowest)}</span>
         </div>
       </div>
     </section>
@@ -468,7 +468,7 @@ function DealCard({
         ) : delta != null ? (
           <p className={`deal-delta ${delta >= 0 ? "up" : "down"}`}>
             {nowListed == null
-              ? `Using hist. low · ${
+              ? `Using best known · ${
                   delta >= 0
                     ? `+${money(delta)} vs paid`
                     : `${money(Math.abs(delta))} over low`
@@ -723,37 +723,6 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
         unpaidBoost={unpaid.current}
       />
 
-      {giftsSent.spent > 0 || (valuation.giftsSentGames?.length ?? 0) > 0 ? (
-        <section className="spend-section gifts-sent-section">
-          <div className="spend-section-head">
-            <div>
-              <h3>Gifts I sent</h3>
-              <p>
-                Wallet outflow for games bought for others — not part of your
-                library value.
-              </p>
-            </div>
-            <span className="gifts-sent-total mono amber">
-              {money(giftsSent.spent)}
-            </span>
-          </div>
-          <div className="purchase-rail">
-            {(valuation.giftsSentGames ?? []).map((g) => (
-              <div key={g.title} className="purchase-chip-card">
-                <SteamThumb appId={g.steamAppId} name={g.title} artwork={artwork} />
-                <div>
-                  <strong>{g.title}</strong>
-                  <small>Gifted away</small>
-                </div>
-                <span className="mono amber">
-                  {g.paid != null ? money(g.paid) : "—"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       <section className="spend-section cph-section">
         <div className="spend-section-head">
           <div>
@@ -935,6 +904,37 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
           titleCatalog={titleCatalog}
           onClose={() => setSelectedMonth(null)}
         />
+      ) : null}
+
+      {giftsSent.spent > 0 || (valuation.giftsSentGames?.length ?? 0) > 0 ? (
+        <section className="spend-section gifts-sent-section">
+          <div className="spend-section-head">
+            <div>
+              <h3>Gifts I sent</h3>
+              <p>
+                Wallet outflow for games bought for others — not part of your
+                library value.
+              </p>
+            </div>
+            <span className="gifts-sent-total mono amber">
+              {money(giftsSent.spent)}
+            </span>
+          </div>
+          <div className="purchase-rail">
+            {(valuation.giftsSentGames ?? []).map((g) => (
+              <div key={g.title} className="purchase-chip-card">
+                <SteamThumb appId={g.steamAppId} name={g.title} artwork={artwork} />
+                <div>
+                  <strong>{g.title}</strong>
+                  <small>Gifted away</small>
+                </div>
+                <span className="mono amber">
+                  {g.paid != null ? money(g.paid) : "—"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
       ) : null}
 
       <details className="spend-details">

@@ -61,5 +61,5 @@ export function createRateLimiter(minIntervalMs: number): RateLimiter {
 /** Shared Steam store limiter (~8–10 req/s peak across workers). */
 export const steamRateLimiter = createRateLimiter(110);
 
-/** CheapShark spacing — softer than Steam, still avoid stampedes. */
-export const cheapSharkRateLimiter = createRateLimiter(60);
+/** CheapShark is strict on rate limits — keep well under their throttle. */
+export const cheapSharkRateLimiter = createRateLimiter(250);
