@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type Ref } from "react";
 import { SearchIcon } from "lucide-react";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
 import { PlaytimePanorama } from "@/components/PlaytimePanorama";
@@ -11,7 +11,7 @@ import {
   rankMedalClass,
   steamStoreUrl,
 } from "@/lib/steam/artwork";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,7 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
 
-type LibraryView = "hours" | "recent" | "name" | "panorama";
+export type LibraryView = "hours" | "recent" | "name" | "panorama";
 
 function GameCard({
   game,
@@ -50,6 +50,7 @@ function GameCard({
   const pct =
     maxHours > 0 ? Math.min(100, (game.hoursForever / maxHours) * 100) : 0;
   const showRank = rank != null && rank > 0;
+  const initial = game.name.trim().slice(0, 1).toUpperCase() || "?";
 
   return (
     <a
@@ -71,7 +72,10 @@ function GameCard({
             onError={() => setSrcIdx((i) => i + 1)}
           />
         ) : (
-          <div className="game-card-fallback">{game.name.slice(0, 1)}</div>
+          <div className="game-card-fallback" aria-hidden>
+            <span className="game-card-fallback-initial">{initial}</span>
+            <span className="game-card-fallback-hint">No cover</span>
+          </div>
         )}
         <div className="game-card-shade" />
         {showRank ? (
@@ -113,17 +117,19 @@ function HeroBanner({
   className,
   kind,
   alt,
+  name,
 }: {
   appId: number;
   artwork?: Record<string, ArtworkUrls>;
   className: string;
   kind: "header" | "library";
   alt?: string;
+  name: string;
 }) {
   return (
     <SteamArt
       appId={appId}
-      name={alt ?? ""}
+      name={name}
       artwork={artwork}
       variant={kind === "library" ? "portrait" : "header"}
       className={className}
@@ -133,10 +139,24 @@ function HeroBanner({
   );
 }
 
-export function GameLibrary({ data }: { data: DashboardPayload }) {
+export function GameLibrary({
+  data,
+  view: viewProp,
+  onViewChange,
+  searchInputRef,
+  onOpenGlossary,
+}: {
+  data: DashboardPayload;
+  view?: LibraryView;
+  onViewChange?: (view: LibraryView) => void;
+  searchInputRef?: Ref<HTMLInputElement>;
+  onOpenGlossary?: (termId?: string) => void;
+}) {
   const { playtime, meta, artwork } = data;
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<LibraryView>("hours");
+  const [internalView, setInternalView] = useState<LibraryView>("hours");
+  const view = viewProp ?? internalView;
+  const setView = onViewChange ?? setInternalView;
 
   const maxHours = playtime.games[0]?.hoursForever || 1;
   const featured = playtime.games[0];
@@ -169,15 +189,15 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-border/70 bg-card/50 px-4 py-3">
         <div className="flex flex-col gap-1">
-          <h3 className="text-lg font-semibold tracking-tight">
+          <h2 className="text-lg font-semibold tracking-tight">
             Your library shelf
-          </h3>
+          </h2>
           <p className="text-sm text-muted-foreground">
             {view === "panorama"
               ? "Playtime panorama · capsules sized by hours (30m+)"
-              : `${filtered.length} titles · sorted like a Steam collection wall`}
+              : `${filtered.length} titles · hours on your shelf`}
             {!meta.hasSteamApiKey
-              ? " · from Account Data games page"
+              ? " · from Account Data"
               : ` · ${playtime.source}`}
           </p>
         </div>
@@ -186,10 +206,12 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
             <div className="relative">
               <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
+                ref={searchInputRef}
                 className="h-8 w-48 pl-8 md:w-56"
-                placeholder="Search games…"
+                placeholder="Search games… (/)"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                aria-label="Search games"
               />
             </div>
           ) : null}
@@ -214,15 +236,30 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
 
       {partialLibrary ? (
         <Alert>
+          <AlertTitle>Partial library snapshot</AlertTitle>
           <AlertDescription>
-            Showing {playtime.games.length} titles from the games page snapshot
-            (often ~25). For your full library, run{" "}
-            <code className="font-mono text-primary">
-              npm run fetch:owned-games
-            </code>{" "}
-            after a Steam login session, or add{" "}
-            <code className="font-mono text-primary">STEAM_API_KEY</code> to{" "}
-            <code className="font-mono text-primary">.env.local</code>.
+            <p>
+              Showing {playtime.games.length} titles from your Account Data
+              games page (often a short list). Add a Steam Web API key for the
+              full owned set.
+            </p>
+            <details className="library-setup-details">
+              <summary>Show setup steps</summary>
+              <ol>
+                <li>
+                  Copy <code className="font-mono text-primary">.env.example</code>{" "}
+                  to <code className="font-mono text-primary">.env.local</code>{" "}
+                  and set <code className="font-mono text-primary">STEAM_API_KEY</code>.
+                </li>
+                <li>
+                  Or run{" "}
+                  <code className="font-mono text-primary">
+                    npm run fetch:owned-games
+                  </code>{" "}
+                  after a Steam login session.
+                </li>
+              </ol>
+            </details>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -234,31 +271,17 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
             artwork={artwork}
             className="library-hero-bg"
             kind="header"
+            name={featured.name}
           />
           <div className="library-hero-veil" />
           <div className="library-hero-content">
-            <h2 className="library-hero-title">{featured.name}</h2>
-            <div className="library-hero-stats">
-              <div>
-                <span className="library-hero-stat-num">
-                  {formatPlayHours(featured.hoursForever)}
-                </span>
-                <span className="library-hero-stat-label">hours on record</span>
-              </div>
-              <div className="library-hero-divider" />
-              <div>
-                <span className="library-hero-stat-num">
-                  {playtime.gamesPlayed}
-                </span>
-                <span className="library-hero-stat-label">games played</span>
-              </div>
-              <div className="library-hero-divider" />
-              <div>
-                <span className="library-hero-stat-num">
-                  {formatPlayHours(playtime.totalHours)}
-                </span>
-                <span className="library-hero-stat-label">total hours</span>
-              </div>
+            <p className="library-hero-role">Most played</p>
+            <h3 className="library-hero-title">{featured.name}</h3>
+            <div className="library-hero-featured-stat">
+              <span className="library-hero-stat-num">
+                {formatPlayHours(featured.hoursForever)}
+              </span>
+              <span className="library-hero-stat-label">hours on this title</span>
             </div>
             {featured.lastPlayedText ? (
               <p className="library-hero-last">
@@ -284,6 +307,7 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
             href={steamStoreUrl(featured.appId)}
             target="_blank"
             rel="noreferrer"
+            aria-label={`${featured.name} on Steam`}
           >
             <HeroBanner
               appId={featured.appId}
@@ -291,9 +315,35 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
               className=""
               kind="library"
               alt={featured.name}
+              name={featured.name}
             />
           </a>
         </section>
+      ) : null}
+
+      {featured && view !== "panorama" ? (
+        <div className="library-account-strip" aria-label="Account playtime">
+          <div>
+            <span className="library-hero-stat-num">
+              {playtime.gamesPlayed}
+            </span>
+            <span className="library-hero-stat-label">games played</span>
+          </div>
+          <div className="library-hero-divider" />
+          <div>
+            <span className="library-hero-stat-num">
+              {formatPlayHours(playtime.totalHours)}
+            </span>
+            <span className="library-hero-stat-label">total hours</span>
+          </div>
+          <div className="library-hero-divider" />
+          <div>
+            <span className="library-hero-stat-num">
+              {playtime.games.length}
+            </span>
+            <span className="library-hero-stat-label">titles listed</span>
+          </div>
+        </div>
       ) : null}
 
       {view === "panorama" ? (
@@ -329,6 +379,18 @@ export function GameLibrary({ data }: { data: DashboardPayload }) {
       {!partialLibrary ? (
         <p className="text-xs text-muted-foreground">
           {playtime.games.length} titles · {playtime.source}
+          {onOpenGlossary ? (
+            <>
+              {" · "}
+              <button
+                type="button"
+                className="glossary-inline-link"
+                onClick={() => onOpenGlossary("shortcuts")}
+              >
+                Shortcuts
+              </button>
+            </>
+          ) : null}
         </p>
       ) : null}
     </div>

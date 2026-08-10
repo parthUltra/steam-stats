@@ -106,14 +106,30 @@ export function SteamArt({
     ? `spend-thumb ${variantClass}`
     : "";
 
+  const label = (alt && alt.trim()) || name.trim() || "Game";
+  const initial = label.slice(0, 1).toUpperCase() || "?";
+
   if (failed) {
-    if (!framed) return null;
+    if (!framed) {
+      return (
+        <div
+          className={["steam-art-fallback", variantClass, className]
+            .filter(Boolean)
+            .join(" ")}
+          role="img"
+          aria-label={label}
+        >
+          <span aria-hidden>{initial}</span>
+        </div>
+      );
+    }
     return (
       <div
         className={`spend-thumb spend-thumb-fallback ${variantClass} ${className ?? ""}`}
-        aria-hidden
+        role="img"
+        aria-label={label}
       >
-        {name.slice(0, 1)}
+        {initial}
       </div>
     );
   }
@@ -124,7 +140,7 @@ export function SteamArt({
       key={candidates[srcIdx]}
       className={[frameClass, className].filter(Boolean).join(" ")}
       src={candidates[srcIdx]}
-      alt={alt ?? ""}
+      alt={label}
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setSrcIdx((i) => i + 1)}

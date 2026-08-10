@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
-import { GameLibrary } from "@/components/GameLibrary";
+import { GameLibrary, type LibraryView } from "@/components/GameLibrary";
 import { SpendingValue } from "@/components/SpendingValue";
+import { GlossaryDrawer } from "@/components/GlossaryDrawer";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CircleHelpIcon } from "lucide-react";
 
 const STEAM_MARK = (
   <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden>
@@ -15,6 +18,14 @@ const STEAM_MARK = (
   </svg>
 );
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (target.isContentEditable) return true;
+  return Boolean(target.closest("[role='dialog'], [role='listbox']"));
+}
+
 export function DashboardView({
   data,
   onRefresh,
@@ -23,6 +34,67 @@ export function DashboardView({
   onRefresh?: () => Promise<void> | void;
 }) {
   const [tab, setTab] = useState("library");
+  const [libraryView, setLibraryView] = useState<LibraryView>("hours");
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  const [glossaryFocus, setGlossaryFocus] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  const openGlossary = useCallback((termId?: string) => {
+    setGlossaryFocus(termId ?? null);
+    setGlossaryOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) {
+        if (e.key === "Escape" && e.target instanceof HTMLInputElement) {
+          e.target.blur();
+        }
+        return;
+      }
+
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+      if (key === "/" ) {
+        e.preventDefault();
+        setTab("library");
+        setLibraryView((v) => (v === "panorama" ? "hours" : v));
+        queueMicrotask(() => searchRef.current?.focus());
+        return;
+      }
+
+      if (key === "1" || key === "l") {
+        e.preventDefault();
+        setTab("library");
+        return;
+      }
+      if (key === "2" || key === "v") {
+        e.preventDefault();
+        setTab("spending");
+        return;
+      }
+
+      if (tab !== "library") return;
+
+      if (key === "h") {
+        e.preventDefault();
+        setLibraryView("hours");
+      } else if (key === "r") {
+        e.preventDefault();
+        setLibraryView("recent");
+      } else if (key === "a") {
+        e.preventDefault();
+        setLibraryView("name");
+      } else if (key === "p") {
+        e.preventDefault();
+        setLibraryView("panorama");
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab]);
 
   return (
     <Tabs
@@ -46,21 +118,50 @@ export function DashboardView({
           </div>
         </div>
 
-        <TabsList className="h-9">
-          <TabsTrigger value="library" className="px-3.5">
-            Library
-          </TabsTrigger>
-          <TabsTrigger value="spending" className="px-3.5">
-            Value
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={() => openGlossary("shortcuts")}
+            aria-label="Open glossary and shortcuts"
+          >
+            <CircleHelpIcon data-icon="inline-start" />
+            Help
+          </Button>
+          <TabsList className="h-9">
+            <TabsTrigger value="library" className="px-3.5">
+              Library
+            </TabsTrigger>
+            <TabsTrigger value="spending" className="px-3.5">
+              Value
+            </TabsTrigger>
+          </TabsList>
+        </div>
       </header>
 
+      <GlossaryDrawer
+        open={glossaryOpen}
+        focusId={glossaryFocus}
+        onClose={() => setGlossaryOpen(false)}
+      />
+
       <TabsContent value="library" className="mt-0 outline-none">
-        <GameLibrary data={data} />
+        <GameLibrary
+          data={data}
+          view={libraryView}
+          onViewChange={setLibraryView}
+          searchInputRef={searchRef}
+          onOpenGlossary={openGlossary}
+        />
       </TabsContent>
       <TabsContent value="spending" className="mt-0 outline-none">
-        <SpendingValue data={data} onRefresh={onRefresh} />
+        <SpendingValue
+          data={data}
+          onRefresh={onRefresh}
+          onOpenGlossary={openGlossary}
+        />
       </TabsContent>
     </Tabs>
   );

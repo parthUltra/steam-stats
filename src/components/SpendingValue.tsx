@@ -13,6 +13,8 @@ import {
 import { isRedundantPackSku } from "@/lib/analytics/edition-packs";
 import { titlesSoftMatch } from "@/lib/analytics/acquisition";
 import { SteamArt } from "@/components/SteamArt";
+import { GmailSyncWizard } from "@/components/GmailSyncWizard";
+import { GlossaryHint } from "@/components/GlossaryDrawer";
 import {
   formatPlayHours,
   rankMedalClass,
@@ -27,6 +29,14 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
+
+function formatQuietDate(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 function moneyFmt(n: number, currency: string) {
   try {
@@ -407,6 +417,7 @@ function TelemetryDuel({
   onExcludeReceivedGifts,
   calibrating,
   onInspect,
+  onOpenGlossary,
 }: {
   spent: number;
   current: number;
@@ -418,6 +429,7 @@ function TelemetryDuel({
   onExcludeReceivedGifts: (v: boolean) => void;
   calibrating?: boolean;
   onInspect: (mode: InspectMode) => void;
+  onOpenGlossary?: (termId?: string) => void;
 }) {
   const max = Math.max(spent, current, lowest, 1);
   const ahead = current >= spent;
@@ -429,28 +441,18 @@ function TelemetryDuel({
     <section className="telemetry">
       <div className="telemetry-head">
         <div>
-          <h3>Paid vs shelf</h3>
+          <h2 className="telemetry-title">Paid vs shelf</h2>
           <p className="telemetry-lede">
-            Click a total to inspect every title. Spent is wallet purchases;
-            shelf now and lowest value playable games
+            Click a total to list every title. Wallet spend versus what the
+            playable shelf costs today and at its India low
             {showExcludeGiftsToggle && excludeReceivedGifts
               ? " (gifts received excluded)."
               : "."}
             {calibrating
-              ? " Lowest is still calibrating — hist low when known, else shelf now."
+              ? " Lowest is still filling in — known lows first, shelf now where missing."
               : ""}
           </p>
         </div>
-        {showExcludeGiftsToggle ? (
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Switch
-              checked={excludeReceivedGifts}
-              onCheckedChange={onExcludeReceivedGifts}
-              size="sm"
-            />
-            <span>Exclude gifts from shelf now &amp; lowest</span>
-          </label>
-        ) : null}
       </div>
 
       <div className="telemetry-duel telemetry-duel-triple">
@@ -458,28 +460,40 @@ function TelemetryDuel({
           type="button"
           className="telemetry-stat spent telemetry-stat-btn"
           onClick={() => onInspect("spent")}
+          aria-label={`You spent ${money(spent)}. Open title list.`}
         >
           <span className="telemetry-label">You spent</span>
           <strong className="telemetry-num amber">{money(spent)}</strong>
-          <span className="telemetry-sub">{purchaseCount} library buys · view</span>
+          <span className="telemetry-sub">
+            {purchaseCount} library buys · open list
+          </span>
         </button>
-        <div className="telemetry-vs" aria-hidden>
-          <span>{ahead ? "▲" : "▼"}</span>
+        <div
+          className="telemetry-vs telemetry-vs-quiet"
+          aria-label={
+            ahead
+              ? `Shelf ahead by ${money(delta)}`
+              : `Shelf behind by ${money(delta)}`
+          }
+        >
+          <span aria-hidden>{ahead ? "▲" : "▼"}</span>
           <small>{money(delta)}</small>
         </div>
         <button
           type="button"
           className="telemetry-stat now telemetry-stat-btn"
           onClick={() => onInspect("shelfNow")}
+          aria-label={`Shelf now ${money(current)}. Open title list.`}
         >
           <span className="telemetry-label">Shelf now</span>
           <strong className="telemetry-num cyan">{money(current)}</strong>
-          <span className="telemetry-sub">Live India · view</span>
+          <span className="telemetry-sub">Live Steam India · open list</span>
         </button>
         <button
           type="button"
           className="telemetry-stat low telemetry-stat-btn"
           onClick={() => onInspect("lowest")}
+          aria-label={`Lowest ${money(lowest)}. Open title list.`}
         >
           <span className="telemetry-label">
             Lowest
@@ -489,7 +503,9 @@ function TelemetryDuel({
           </span>
           <strong className="telemetry-num rose">{money(lowest)}</strong>
           <span className="telemetry-sub">
-            {calibrating ? "Calibrating · view" : "India hist · view"}
+            {calibrating
+              ? "Still filling India lows · open list"
+              : "Steam India all-time low · open list"}
           </span>
         </button>
       </div>
@@ -507,10 +523,48 @@ function TelemetryDuel({
         </div>
         <div className="tug-legend">
           <span className="amber">Paid</span>
-          <span className="cyan">Shelf now</span>
-          <span className="rose">Lowest</span>
+          <span className="cyan">
+            {onOpenGlossary ? (
+              <GlossaryHint termId="shelf-now" onOpen={onOpenGlossary}>
+                Shelf now
+              </GlossaryHint>
+            ) : (
+              "Shelf now"
+            )}
+          </span>
+          <span className="rose">
+            {onOpenGlossary ? (
+              <GlossaryHint
+                termId={calibrating ? "calibrating" : "lowest"}
+                onOpen={onOpenGlossary}
+              >
+                Lowest
+              </GlossaryHint>
+            ) : (
+              "Lowest"
+            )}
+          </span>
         </div>
       </div>
+
+      {showExcludeGiftsToggle ? (
+        <div className="telemetry-exclude">
+          <Switch
+            checked={excludeReceivedGifts}
+            onCheckedChange={onExcludeReceivedGifts}
+            size="sm"
+            id="exclude-gifts-switch"
+          />
+          <label htmlFor="exclude-gifts-switch">
+            Exclude gifts from shelf now &amp; lowest
+          </label>
+          {onOpenGlossary ? (
+            <GlossaryHint termId="exclude-gifts" onOpen={onOpenGlossary}>
+              what this does
+            </GlossaryHint>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -560,6 +614,14 @@ function formatMonthLabel(monthKey: string) {
   return d.toLocaleString(undefined, { month: "long", year: "numeric" });
 }
 
+function formatMonthShort(monthKey: string) {
+  const [y, m] = monthKey.split("-");
+  if (!y || !m) return monthKey;
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  if (Number.isNaN(d.getTime())) return monthKey;
+  return d.toLocaleString(undefined, { month: "short", year: "2-digit" });
+}
+
 function MonthRail({
   rows,
   money,
@@ -586,7 +648,7 @@ function MonthRail({
           const inner = (
             <>
               <span className="month-rail-label">
-                {r.month.replace(/^\d{2}/, "")}
+                {formatMonthShort(r.month)}
               </span>
               <div className="month-rail-track">
                 <span
@@ -763,7 +825,16 @@ function PaymentStack({
   const colors = ["#66c0f4", "#3ee0d5", "#ffb347", "#ff6b8a", "#8b9aab"];
   return (
     <div className="pay-stack">
-      <div className="pay-bar" aria-hidden>
+      <div
+        className="pay-bar"
+        role="img"
+        aria-label={methods
+          .map(
+            (m) =>
+              `${m.method} ${Math.round((m.spent / total) * 100)} percent`,
+          )
+          .join(", ")}
+      >
         {methods.map((m, i) => (
           <span
             key={m.method}
@@ -781,6 +852,7 @@ function PaymentStack({
             <span
               className="pay-dot"
               style={{ background: colors[i % colors.length] }}
+              aria-hidden
             />
             <span className="pay-name">{m.method}</span>
             <span className="mono">
@@ -933,9 +1005,11 @@ function CostPerHourRow({
 export function SpendingValue({
   data,
   onRefresh,
+  onOpenGlossary,
 }: {
   data: DashboardPayload;
   onRefresh?: () => Promise<void> | void;
+  onOpenGlossary?: (termId?: string) => void;
 }) {
   const { spending, valuation, recentPurchases, meta, costPerHour, artwork, playtime } =
     data;
@@ -956,6 +1030,7 @@ export function SpendingValue({
   const [mailSyncing, setMailSyncing] = useState(false);
   const [mailSyncError, setMailSyncError] = useState<string | null>(null);
   const [mailSyncStatus, setMailSyncStatus] = useState<string | null>(null);
+  const [gmailWizardOpen, setGmailWizardOpen] = useState(false);
   const [itadConnected, setItadConnected] = useState(
     Boolean(meta.hasItadApiKey),
   );
@@ -964,6 +1039,7 @@ export function SpendingValue({
   const [itadSaving, setItadSaving] = useState(false);
   const [itadError, setItadError] = useState<string | null>(null);
   const [itadStatus, setItadStatus] = useState<string | null>(null);
+  const [lowsRefreshing, setLowsRefreshing] = useState(false);
   const [latestProgress, setLatestProgress] = useState<{
     latest: number;
     total: number;
@@ -975,6 +1051,7 @@ export function SpendingValue({
   const giftsSent = valuation.giftsSent;
 
   const syncGmail = useCallback(async () => {
+    setGmailWizardOpen(false);
     setMailSyncing(true);
     setMailSyncError(null);
     setMailSyncStatus(
@@ -1092,6 +1169,24 @@ export function SpendingValue({
       // ignore — bar still shows stored coverage
     }
   }, []);
+
+  const refreshLowsNow = useCallback(async () => {
+    setLowsRefreshing(true);
+    setItadError(null);
+    setItadStatus("Refreshing India lows…");
+    try {
+      await ensureWeeklyLows({ force: true });
+      setItadStatus("Refresh started — progress updates below.");
+      void onRefresh?.();
+    } catch (err) {
+      setItadError(
+        err instanceof Error ? err.message : "Could not refresh lows",
+      );
+      setItadStatus(null);
+    } finally {
+      window.setTimeout(() => setLowsRefreshing(false), 1200);
+    }
+  }, [ensureWeeklyLows, onRefresh]);
 
   const saveItadKey = useCallback(async () => {
     setItadSaving(true);
@@ -1261,13 +1356,14 @@ export function SpendingValue({
         <div>
           <h2>Value & spending</h2>
           <p className="spend-lede">
-            Paid vs market in one readout.
+            Was the money well spent? Start with paid versus shelf, then scroll
+            for cost per hour, months, and gifts.
           </p>
         </div>
         <div className="spend-toolbar-actions">
           <p className="meta-line meta-line-emphasis">
             {meta.priceCacheUpdatedAt
-              ? `Quotes updated ${new Date(meta.priceCacheUpdatedAt).toLocaleString()}`
+              ? `Quotes updated ${formatQuietDate(meta.priceCacheUpdatedAt)}`
               : "Market quotes load automatically"}
           </p>
           {!itadConnected ? (
@@ -1279,15 +1375,36 @@ export function SpendingValue({
             >
               Get India lows
             </Button>
-          ) : null}
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={lowsRefreshing}
+              onClick={() => void refreshLowsNow()}
+            >
+              <RefreshCwIcon
+                data-icon="inline-start"
+                className={lowsRefreshing ? "animate-spin" : undefined}
+              />
+              {lowsRefreshing ? "Refreshing…" : "Refresh lows"}
+            </Button>
+          )}
           {itadStatus ? <p className="meta-line">{itadStatus}</p> : null}
           {itadError && !itadStep ? (
-            <p className="meta-line" style={{ color: "#f87171" }}>
-              {itadError}
-            </p>
+            <p className="meta-line meta-line-error">{itadError}</p>
           ) : null}
         </div>
       </div>
+
+      {gmailWizardOpen ? (
+        <GmailSyncWizard
+          open={gmailWizardOpen}
+          busy={mailSyncing}
+          onCancel={() => setGmailWizardOpen(false)}
+          onContinue={() => void syncGmail()}
+        />
+      ) : null}
 
       {itadStep && typeof document !== "undefined"
         ? createPortal(
@@ -1306,7 +1423,7 @@ export function SpendingValue({
               <div className="itad-key-card">
                 {itadStep === "explain" ? (
                   <>
-                    <h3 id="itad-key-title">Get Steam India all-time lows</h3>
+                    <h3 id="itad-key-title">Connect Steam India all-time lows</h3>
                     <ol className="itad-key-steps">
                       <li>
                         Continue opens IsThereAnyDeal Apps in a new tab (sign
@@ -1318,13 +1435,12 @@ export function SpendingValue({
                         API key.
                       </li>
                       <li>
-                        Come back here, paste the key, and steam-stats stores
-                        it locally — then refreshes Lowest.
+                        Come back here, paste the key. It stays on this machine
+                        only — then Lowest refreshes.
                       </li>
                     </ol>
                     <p className="itad-key-note">
-                      No browser automation. Your key stays on this machine
-                      only.
+                      No browser automation. You can cancel anytime.
                     </p>
                     <div className="itad-key-actions">
                       <Button
@@ -1426,6 +1542,7 @@ export function SpendingValue({
         onExcludeReceivedGifts={setExclude}
         calibrating={lowsCalibrating}
         onInspect={setInspectMode}
+        onOpenGlossary={onOpenGlossary}
       />
 
       {inspectMode ? (
@@ -1450,18 +1567,45 @@ export function SpendingValue({
 
       <div className="value-after-telemetry">
         {latestProgress ? (
-          <LowsLatestBar
-            latest={latestProgress.latest}
-            total={latestProgress.total}
-          />
+          <div className="lows-refresh-row">
+            <LowsLatestBar
+              latest={latestProgress.latest}
+              total={latestProgress.total}
+            />
+            {itadConnected ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="lows-refresh-inline"
+                disabled={lowsRefreshing}
+                onClick={() => void refreshLowsNow()}
+              >
+                <RefreshCwIcon
+                  data-icon="inline-start"
+                  className={lowsRefreshing ? "animate-spin" : undefined}
+                />
+                Refresh
+              </Button>
+            ) : null}
+          </div>
         ) : null}
 
-        <section className="spend-section cph-section">
+        <section className="spend-section cph-section value-secondary-beat">
           <div className="spend-section-head">
             <div>
               <h3>Spend vs playtime</h3>
               <p>
-                Cost per hour on library titles with a paid amount.
+                Cost per hour on library titles with a paid amount
+                {onOpenGlossary ? (
+                  <>
+                    {" · "}
+                    <GlossaryHint termId="blended" onOpen={onOpenGlossary}>
+                      blended rate
+                    </GlossaryHint>
+                  </>
+                ) : null}
+                .
               </p>
             </div>
           </div>
@@ -1626,7 +1770,7 @@ export function SpendingValue({
                 variant="outline"
                 size="sm"
                 disabled={mailSyncing}
-                onClick={() => void syncGmail()}
+                onClick={() => setGmailWizardOpen(true)}
               >
                 <RefreshCwIcon
                   data-icon="inline-start"
@@ -1651,15 +1795,7 @@ export function SpendingValue({
                   className="gifts-received-meta"
                   title={new Date(meta.mailGiftsLastSyncedAt).toLocaleString()}
                 >
-                  Synced{" "}
-                  {new Date(meta.mailGiftsLastSyncedAt).toLocaleDateString(
-                    undefined,
-                    {
-                      day: "numeric",
-                      month: "short",
-                      year: "numeric",
-                    },
-                  )}
+                  Synced {formatQuietDate(meta.mailGiftsLastSyncedAt)}
                 </span>
               ) : null}
             </div>
@@ -1716,8 +1852,18 @@ export function SpendingValue({
           </div>
         ) : (
           <p className="gifts-received-empty">
-            No gifts yet. Use <strong>Sync from Gmail</strong> to pull Steam
-            gift emails.
+            No gifts yet. Use <strong>Sync from Gmail</strong>
+            {onOpenGlossary ? (
+              <>
+                {" "}
+                (
+                <GlossaryHint termId="gmail-sync" onOpen={onOpenGlossary}>
+                  what happens
+                </GlossaryHint>
+                )
+              </>
+            ) : null}{" "}
+            to pull Steam gift emails into a local list.
           </p>
         )}
       </section>
