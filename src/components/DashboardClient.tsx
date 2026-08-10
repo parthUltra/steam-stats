@@ -61,7 +61,7 @@ export function DashboardClient({
     };
   }, []);
 
-  // Weekly India lows: start a one-shot refresh only if stored data is stale (>7 days)
+  // Weekly store lows: start a one-shot refresh only if stored data is stale (>7 days)
   useEffect(() => {
     void fetch("/api/refresh-prices", {
       method: "POST",

@@ -1,10 +1,11 @@
 /**
- * One-shot weekly India lows refresh (minimal ITAD traffic).
+ * One-shot weekly store lows refresh (minimal ITAD traffic).
+ * Auto-detects Steam country from wallet currency / login history.
  * Stores results in data/price-cache.json (valid ~7 days).
  *
  * Typical cost for ~80–200 titles with cached Steam app ids:
  *   - 0–1× POST /lookup/id/shop/61/v1  (only missing itadIds)
- *   - 1×   POST /games/prices/v3       (current + Steam store low, country=IN)
+ *   - 1×   POST /games/prices/v3       (current + Steam store low, detected country)
  *
  * Usage: npm run refresh:prices
  */
@@ -16,19 +17,23 @@ import {
   loadPriceCache,
   pickOldestTitles,
   refreshPricesForTitles,
+  resolveAndApplyStoreRegion,
 } from "../src/lib/pricing/prices";
+import { storeRegionLabel } from "../src/lib/pricing/store-region";
 import { writePriceRefreshStatus } from "../src/lib/pricing/price-refresh-status";
 
 async function main() {
   const bundle = await loadLocalAccountData();
   const titles = libraryTitlesForValuation(bundle.purchases, bundle.licenses);
+  const { region } = await resolveAndApplyStoreRegion();
+  const label = storeRegionLabel(region.country);
   console.log(
-    `Weekly India lows (bulk prices/v3) for ${titles.length} library titles…`,
+    `Weekly ${label} (${region.country}/${region.currency}) lows for ${titles.length} library titles…`,
   );
 
   if (!(await hasItadApiKey())) {
     console.warn(
-      "No IsThereAnyDeal key — paste one via Value → Get India lows.",
+      `No IsThereAnyDeal key — paste one via Value → Get ${label} lows.`,
     );
   }
 
@@ -73,7 +78,7 @@ async function main() {
   });
 
   const { latest, total } = countLatestQuotes(titles, cache);
-  const withInr = Object.values(cache.quotes).filter(
+  const withLow = Object.values(cache.quotes).filter(
     (q) => q.lowestInr != null && q.lowestInr > 0,
   ).length;
   const withItadId = Object.values(cache.quotes).filter((q) => q.itadId)
@@ -85,11 +90,11 @@ async function main() {
     libraryTotal: total,
     done: latest,
     total,
-    message: `India lows stored ${latest} / ${total} (valid ~7 days).`,
+    message: `${label} lows stored ${latest} / ${total} (valid ~7 days).`,
   });
 
   console.log(
-    `Done. Fresh ${latest}/${total} · ${withInr} INR lows · ${withItadId} cached itadIds · ${cache.updatedAt}`,
+    `Done. Fresh ${latest}/${total} · ${withLow} store lows · ${withItadId} cached itadIds · ${region.country} · ${cache.updatedAt}`,
   );
 }
 
@@ -99,7 +104,7 @@ main().catch(async (err) => {
     await writePriceRefreshStatus({
       phase: "error",
       error: err instanceof Error ? err.message : String(err),
-      message: "Weekly India lows refresh failed.",
+      message: "Weekly store lows refresh failed.",
     });
   } catch {
     // ignore

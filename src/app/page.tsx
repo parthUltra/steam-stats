@@ -7,7 +7,7 @@ export default async function Home() {
   let initialData = null;
   let initialError: string | null = null;
   try {
-    // Cache-only first paint; weekly India lows refresh runs in the background if stale.
+    // Cache-only first paint; weekly store lows refresh runs in the background if stale.
     initialData = await buildDashboard({
       refreshPrices: false,
       priceLimit: 0,

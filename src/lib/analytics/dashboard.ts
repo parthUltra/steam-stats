@@ -11,7 +11,14 @@ import {
   type PlayedGame,
 } from "@/lib/account-data";
 import { resolveItadApiKey } from "@/lib/pricing/itad-credentials";
-import { loadPriceCache, refreshPricesForTitles } from "@/lib/pricing/prices";
+import {
+  loadPriceCache,
+  refreshPricesForTitles,
+  resolveAndApplyStoreRegion,
+} from "@/lib/pricing/prices";
+import {
+  storeRegionLabel,
+} from "@/lib/pricing/store-region";
 import {
   fetchOwnedGamesFromSteamSession,
   fetchOwnedGamesPlaytime,
@@ -162,6 +169,9 @@ export async function buildDashboard(options?: {
     ]),
   ];
   let priceCache = await loadPriceCache();
+  const { region, cache: regionCache } =
+    await resolveAndApplyStoreRegion(priceCache);
+  priceCache = regionCache;
   // priceLimit 0 = cache only (preferred). Non-zero tops up missing/stale
   // quotes (7-day TTL unless force) — used by CLI refresh, not dashboard load.
   const priceLimit = options?.priceLimit ?? 0;
@@ -172,7 +182,7 @@ export async function buildDashboard(options?: {
     });
   }
 
-  // Month-detail full prices: Steam INR list (cc=IN), never USD×FX
+  // Month-detail full prices: Steam store list for detected country
   applySteamInrListPrices(spending.monthly, priceCache.quotes);
 
   const quoteAppIds = Object.values(priceCache.quotes)
@@ -293,6 +303,10 @@ export async function buildDashboard(options?: {
       titlesForPricing: titles.length,
       hasSteamApiKey: Boolean(process.env.STEAM_API_KEY),
       hasItadApiKey: Boolean(await resolveItadApiKey()),
+      storeCountry: region.country,
+      storeCurrency: region.currency,
+      storeRegionLabel: storeRegionLabel(region.country),
+      storeRegionSource: region.source,
       libraryGameCount: playedGames.length,
       mailGiftsLastSyncedAt: receivedStore.lastMailSyncedAt ?? null,
       mailGiftsCount: receivedStore.gifts.length,

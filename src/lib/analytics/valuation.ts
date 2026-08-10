@@ -203,7 +203,7 @@ function median(values: number[]): number | null {
 export function inferUsdToDisplayRate(priceCache: PriceCache): number | null {
   const ratios: number[] = [];
   for (const q of Object.values(priceCache.quotes)) {
-    // Prefer retail INR/USD when both exist — sale prices skew the FX ratio
+    // Prefer retail local/USD when both exist — sale prices skew the FX ratio
     if (
       q.retailInr != null &&
       q.retailInr > 0 &&
@@ -211,7 +211,7 @@ export function inferUsdToDisplayRate(priceCache: PriceCache): number | null {
       q.retailUsd > 0
     ) {
       const r = q.retailInr / q.retailUsd;
-      if (r >= 60 && r <= 100) ratios.push(r);
+      if (r > 0.05 && r < 500) ratios.push(r);
       continue;
     }
     if (
@@ -221,8 +221,7 @@ export function inferUsdToDisplayRate(priceCache: PriceCache): number | null {
       q.currentInr > 0
     ) {
       const r = q.currentInr / q.currentUsd;
-      // Drop sale-skewed pairs (e.g. ₹179 / $7.99 ≈ 22)
-      if (r >= 60 && r <= 100) ratios.push(r);
+      if (r > 0.05 && r < 500) ratios.push(r);
     }
   }
   return median(ratios);
@@ -232,14 +231,18 @@ function quoteCurrentInCurrency(
   quote: GamePriceQuote,
   currency: string,
   usdRate: number | null,
+  storeCurrency: string,
 ): number | null {
   let raw: number | null = null;
-  if (currency === "INR") {
+  const storeCur = storeCurrency.toUpperCase();
+  const displayCur = currency.toUpperCase();
+
+  if (displayCur === storeCur) {
     if (quote.currentInr != null) raw = quote.currentInr;
     else if (quote.currentUsd != null && usdRate != null) {
       raw = quote.currentUsd * usdRate;
     }
-  } else if (currency === "USD") {
+  } else if (displayCur === "USD") {
     raw = quote.currentUsd;
   } else if (quote.currentUsd != null && usdRate != null) {
     raw = quote.currentUsd * usdRate;
@@ -256,31 +259,39 @@ function quoteLowestInCurrency(
   currency: string,
   currentLocal: number | null,
   _usdRate: number | null,
+  storeCurrency: string,
 ): number | null {
-  // Only IsThereAnyDeal Steam India all-time low — never CheapShark / FX.
+  // Only IsThereAnyDeal Steam store all-time low — never CheapShark / FX invent.
   if (quote.lowestInr == null || quote.lowestInr <= 0) return null;
 
-  const currentInr =
+  const storeCur = storeCurrency.toUpperCase();
+  const displayCur = currency.toUpperCase();
+
+  const currentStore =
     quote.currentInr != null && quote.currentInr > 0
       ? quote.currentInr
-      : currency === "INR"
+      : displayCur === storeCur
         ? currentLocal
         : null;
 
-  // Cap at live India price when we have it
-  if (currentInr != null && quote.lowestInr > currentInr) {
-    return currentInr;
+  // Cap at live store price when we have it
+  if (currentStore != null && quote.lowestInr > currentStore) {
+    if (displayCur === storeCur) return currentStore;
+    if (currentLocal != null && currentStore > 0) {
+      return currentLocal * (quote.lowestInr / currentStore);
+    }
+    return null;
   }
 
-  if (currency === "INR") return quote.lowestInr;
+  if (displayCur === storeCur) return quote.lowestInr;
 
-  // Non-INR display: scale from INR via live quote when possible
+  // Non-matching display: scale from store via live quote when possible
   if (
     currentLocal != null &&
-    currentInr != null &&
-    currentInr > 0
+    currentStore != null &&
+    currentStore > 0
   ) {
-    return currentLocal * (quote.lowestInr / currentInr);
+    return currentLocal * (quote.lowestInr / currentStore);
   }
   return null;
 }
@@ -296,8 +307,8 @@ export function effectiveShelfNow(game: {
 }
 
 /**
- * Stored India hist-low for shelf “lowest” totals (ITAD Steam IN).
- * Free titles are ₹0. No fallback to live price — missing lows stay out
+ * Stored hist-low for shelf “lowest” totals (ITAD Steam for detected country).
+ * Free titles are 0. No fallback to live price — missing lows stay out
  * of the total until they’re stored (UI may hybridize while calibrating).
  */
 export function effectiveShelfLowest(game: {
@@ -418,7 +429,7 @@ function sumShelf(
 
 /**
  * Remasters sometimes lack an ITAD Steam store-low while the original SKU has
- * one (BioShock Remastered vs BioShock). Use the best related India low.
+ * one (BioShock Remastered vs BioShock). Use the best related store low.
  */
 function relatedEditionIndiaLow(
   priceCache: PriceCache,
@@ -444,6 +455,7 @@ function priceGame(
   priceCache: PriceCache,
   currency: string,
   usdRate: number | null,
+  storeCurrency: string,
   unresolvedTitles: string[],
   acquisitionNote?: string,
   giftPeople?: { giftedFrom?: string; giftedTo?: string },
@@ -473,7 +485,7 @@ function priceGame(
     };
   }
 
-  const current = quoteCurrentInCurrency(quote, currency, usdRate);
+  const current = quoteCurrentInCurrency(quote, currency, usdRate, storeCurrency);
   // Free-to-keep titles: lowest is ₹0 (not market/live price)
   if (kind === "free") {
     return {
@@ -493,7 +505,7 @@ function priceGame(
     };
   }
 
-  let lowest = quoteLowestInCurrency(quote, currency, current, usdRate);
+  let lowest = quoteLowestInCurrency(quote, currency, current, usdRate, storeCurrency);
   if (lowest == null) {
     const related = relatedEditionIndiaLow(
       priceCache,
@@ -502,7 +514,7 @@ function priceGame(
     );
     if (related != null) {
       lowest =
-        currency === "INR"
+        currency.toUpperCase() === storeCurrency.toUpperCase()
           ? related
           : current != null &&
               quote.currentInr != null &&
@@ -791,6 +803,8 @@ export function buildLibraryValuation(
   },
 ): LibraryValuation {
   const currency = spending.currency;
+  const storeCurrency =
+    priceCache.currency?.trim().toUpperCase() || currency.toUpperCase();
   const usdRate = currency === "USD" ? 1 : inferUsdToDisplayRate(priceCache);
 
   const libraryPaid = paidByTitle(purchases, { giftsOnly: false });
@@ -823,11 +837,13 @@ export function buildLibraryValuation(
     const priceHint = quote
       ? {
           current:
-            currency === "USD"
+            currency.toUpperCase() === "USD" &&
+            storeCurrency !== "USD"
               ? quote.currentUsd
               : (quote.currentInr ?? quote.currentUsd),
           retail:
-            currency === "USD"
+            currency.toUpperCase() === "USD" &&
+            storeCurrency !== "USD"
               ? quote.retailUsd
               : (quote.retailInr ?? quote.retailUsd),
         }
@@ -861,6 +877,7 @@ export function buildLibraryValuation(
         priceCache,
         currency,
         usdRate,
+        storeCurrency,
         unresolvedTitles,
         classified.note,
         giftedFrom ? { giftedFrom } : undefined,
@@ -885,6 +902,7 @@ export function buildLibraryValuation(
         priceCache,
         currency,
         usdRate,
+        storeCurrency,
         unresolvedTitles,
         giftedTo ? `Gifted to ${giftedTo}` : undefined,
         giftedTo ? { giftedTo } : undefined,
@@ -956,7 +974,7 @@ export function buildLibraryValuation(
   };
 
   const note =
-    "Spent is what you paid for your library. Shelf now values playable games only (not collections/bundles). Remasters and alternate editions fold into one row (remaster preferred — originals are not double-counted). Bundles attribute cost to included titles when the checkout lists the pack. Gifts received come from Steam Gift/Guest Pass and/or Gmail sync. DLC rolls into the base when both are owned. Lowest is only the Steam India all-time low via IsThereAnyDeal, refreshed at most weekly and stored locally. Free titles count as ₹0 for lowest. Gifts you sent are separate.";
+    "Spent is what you paid for your library. Shelf now values playable games only (not collections/bundles). Remasters and alternate editions fold into one row (remaster preferred — originals are not double-counted). Bundles attribute cost to included titles when the checkout lists the pack. Gifts received come from Steam Gift/Guest Pass and/or Gmail sync. DLC rolls into the base when both are owned. Lowest is the Steam store all-time low via IsThereAnyDeal, refreshed at most weekly and stored locally. Free titles count as 0 for lowest. Gifts you sent are separate.";
 
   // Back-compat: excludingGifts ≈ full library shelf; includingGifts ignored for heroes
   const excludingGifts = shelfFull;

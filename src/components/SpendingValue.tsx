@@ -227,8 +227,8 @@ function ShelfInspectModal({
     mode === "spent"
       ? "What you paid per library title (wallet purchases)."
       : mode === "shelfNow"
-        ? "Live Steam India price per playable game."
-        : "Steam India all-time low when stored — bought titles without a low still appear as —.";
+        ? "Live Steam store price per playable game."
+        : "Steam all-time low when stored — bought titles without a low still appear as —.";
 
   const rows = useMemo(() => {
     const list = buildInspectRows(games, mode, { calibrating });
@@ -444,7 +444,7 @@ function TelemetryDuel({
           <h2 className="telemetry-title">Paid vs shelf</h2>
           <p className="telemetry-lede">
             Click a total to list every title. Wallet spend versus what the
-            playable shelf costs today and at its India low
+            playable shelf costs today and at its store low
             {showExcludeGiftsToggle && excludeReceivedGifts
               ? " (gifts received excluded)."
               : "."}
@@ -487,7 +487,7 @@ function TelemetryDuel({
         >
           <span className="telemetry-label">Shelf now</span>
           <strong className="telemetry-num cyan">{money(current)}</strong>
-          <span className="telemetry-sub">Live Steam India · open list</span>
+          <span className="telemetry-sub">Live store · open list</span>
         </button>
         <button
           type="button"
@@ -504,8 +504,8 @@ function TelemetryDuel({
           <strong className="telemetry-num rose">{money(lowest)}</strong>
           <span className="telemetry-sub">
             {calibrating
-              ? "Still filling India lows · open list"
-              : "Steam India all-time low · open list"}
+              ? "Still filling lows · open list"
+              : "All-time low · open list"}
           </span>
         </button>
       </div>
@@ -588,10 +588,10 @@ function LowsLatestBar({
       aria-valuemin={0}
       aria-valuemax={total}
       aria-valuenow={clamped}
-      aria-label="Titles with fresh India lows"
+      aria-label="Titles with fresh store lows"
     >
       <span className="lows-refresh-progress-label">
-        <span>{allLatest ? "Up to date · 7d" : "India lows · 7d"}</span>
+        <span>{allLatest ? "Up to date · 7d" : "Store lows · 7d"}</span>
       </span>
       <div className="lows-refresh-progress-track">
         <span
@@ -1173,7 +1173,7 @@ export function SpendingValue({
   const refreshLowsNow = useCallback(async () => {
     setLowsRefreshing(true);
     setItadError(null);
-    setItadStatus("Refreshing India lows…");
+    setItadStatus("Refreshing lows…");
     try {
       await ensureWeeklyLows({ force: true });
       setItadStatus("Refresh started — progress updates below.");
@@ -1373,7 +1373,7 @@ export function SpendingValue({
               size="sm"
               onClick={openItadExplain}
             >
-              Get India lows
+              Get store lows
             </Button>
           ) : (
             <Button
@@ -1423,7 +1423,7 @@ export function SpendingValue({
               <div className="itad-key-card">
                 {itadStep === "explain" ? (
                   <>
-                    <h3 id="itad-key-title">Connect Steam India all-time lows</h3>
+                    <h3 id="itad-key-title">Connect store all-time lows</h3>
                     <ol className="itad-key-steps">
                       <li>
                         Continue opens IsThereAnyDeal Apps in a new tab (sign

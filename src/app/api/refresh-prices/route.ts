@@ -60,7 +60,7 @@ function startOneShotRefresh() {
   return child;
 }
 
-/** GET — weekly India-low coverage + one-shot refresh status. */
+/** GET — weekly store-low coverage + one-shot refresh status. */
 export async function GET() {
   const cache = await loadPriceCache();
   const running = await isPriceRefreshRunning();
@@ -80,7 +80,7 @@ export async function GET() {
 }
 
 /**
- * POST — run a one-shot weekly India-lows refresh if needed.
+ * POST — run a one-shot weekly store-lows refresh if needed.
  * Body: { force?: boolean, restart?: boolean }
  * - Default: no-op when all titles are fresh within 7 days.
  * - force/restart: run even if fresh (e.g. right after saving an ITAD key).
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
         started: false,
         skipped: true,
         weekFresh: true,
-        message: "India lows are fresh (stored ≤ 7 days). Skipping refresh.",
+        message: "Store lows are fresh (stored ≤ 7 days). Skipping refresh.",
         latest,
         total,
         ttlMs: PRICE_CACHE_TTL_MS,
@@ -115,7 +115,7 @@ export async function POST(req: Request) {
         ok: true,
         started: false,
         alreadyRunning: true,
-        message: "Weekly India lows refresh already running.",
+        message: "Weekly Store lows refresh already running.",
         latest,
         total,
       });
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
     await fs.mkdir(PRICE_REFRESH_STATUS_DIR, { recursive: true });
     await writePriceRefreshStatus({
       phase: "running",
-      message: `Weekly India lows refresh… ${latest} / ${total}`,
+      message: `Weekly Store lows refresh… ${latest} / ${total}`,
       startedAt: new Date().toISOString(),
       latest,
       libraryTotal: total,
@@ -143,7 +143,7 @@ export async function POST(req: Request) {
         libraryTotal: total,
         done: latest,
         total,
-        message: `Weekly India lows refresh… ${latest} / ${total}`,
+        message: `Weekly Store lows refresh… ${latest} / ${total}`,
       });
     }
 
@@ -155,7 +155,7 @@ export async function POST(req: Request) {
           if (code === 0) {
             await writePriceRefreshStatus({
               phase: "done",
-              message: `India lows stored ${next.latest} / ${next.total} (valid ~7 days).`,
+              message: `Store lows stored ${next.latest} / ${next.total} (valid ~7 days).`,
               latest: next.latest,
               libraryTotal: next.total,
               done: next.latest,
@@ -165,7 +165,7 @@ export async function POST(req: Request) {
             await writePriceRefreshStatus({
               phase: "error",
               error: `Price refresh exited with code ${code ?? "?"}`,
-              message: "Weekly India lows refresh failed.",
+              message: "Weekly Store lows refresh failed.",
               latest: next.latest,
               libraryTotal: next.total,
             });
@@ -180,7 +180,7 @@ export async function POST(req: Request) {
       ok: true,
       started: true,
       forced: force,
-      message: "Weekly India lows refresh started. Results are stored locally.",
+      message: "Weekly Store lows refresh started. Results are stored locally.",
       latest,
       total,
       ttlMs: PRICE_CACHE_TTL_MS,

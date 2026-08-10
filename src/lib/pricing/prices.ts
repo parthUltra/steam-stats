@@ -7,6 +7,10 @@ import {
 import { dataPath, ensureDataDir } from "@/lib/data/load-local";
 import { resolveItadApiKey } from "@/lib/pricing/itad-credentials";
 import {
+  resolveStoreRegionFromAccount,
+  type StoreRegion,
+} from "@/lib/pricing/store-region";
+import {
   stripEditionNoise,
   titlesSoftMatch,
 } from "@/lib/analytics/acquisition";
@@ -19,10 +23,20 @@ export type GamePriceQuote = {
   /** @deprecated CheapShark USD low — not used for shelf lowest anymore */
   lowestUsd: number | null;
   currentUsd: number | null;
+  /**
+   * Live Steam store price in the active store currency
+   * (field name is historical; value matches PriceCache.currency).
+   */
   currentInr: number | null;
-  /** Steam India all-time low via IsThereAnyDeal (country=IN) */
+  /**
+   * Steam store all-time low via IsThereAnyDeal for the active country
+   * (field name is historical; value matches PriceCache.currency).
+   */
   lowestInr: number | null;
-  /** Steam store list price in INR (cc=IN price_overview.initial) — never FX from USD */
+  /**
+   * Steam store list / MSRP in the active store currency
+   * (field name is historical; value matches PriceCache.currency).
+   */
   retailInr: number | null;
   retailUsd: number | null;
   onSale: boolean;
@@ -34,7 +48,7 @@ export type GamePriceQuote = {
     | "unresolved";
   updatedAt: string;
   /**
-   * Last successful ITAD attempt (within weekly TTL), even if no India low exists.
+   * Last successful ITAD attempt (within weekly TTL), even if no store low exists.
    * Used so DLC / missing-ITAD titles don't block the weekly progress bar.
    */
   itadCheckedAt?: string | null;
@@ -50,6 +64,10 @@ export class ItadRateLimitError extends Error {
 
 export type PriceCache = {
   updatedAt: string;
+  /** ISO country used for Steam cc + ITAD country */
+  country?: string;
+  /** ISO currency for currentInr / lowestInr / retailInr amounts */
+  currency?: string;
   quotes: Record<string, GamePriceQuote>;
 };
 
@@ -58,11 +76,80 @@ const UA = "steam-stats-local/0.1 (personal; localhost)";
 /** Serial refreshes — ITAD window limiter paces requests. */
 const TITLE_CONCURRENCY = 1;
 const CHECKPOINT_EVERY = 5;
-/** India lows stay valid this long before a weekly refresh is needed. */
+/** Store lows stay valid this long before a weekly refresh is needed. */
 export const PRICE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** IsThereAnyDeal shop id for Steam */
 const ITAD_STEAM_SHOP = 61;
+
+/** Active region for the current refresh / helpers (Steam cc + ITAD country). */
+let activeStoreRegion: StoreRegion = {
+  country: "US",
+  currency: "USD",
+  source: "default",
+};
+
+export function getActiveStoreRegion(): StoreRegion {
+  return activeStoreRegion;
+}
+
+function steamCc(): string {
+  return activeStoreRegion.country.toLowerCase();
+}
+
+function itadCountry(): string {
+  return activeStoreRegion.country.toUpperCase();
+}
+
+/**
+ * When detected region differs from cache, clear local store prices so the
+ * next refresh fills the new country’s quotes (keep app / ITAD ids).
+ */
+export async function applyStoreRegionToCache(
+  cache: PriceCache,
+  region: StoreRegion,
+): Promise<PriceCache> {
+  const prevCc = cache.country?.toUpperCase() ?? null;
+  const nextCc = region.country.toUpperCase();
+  const prevCur = cache.currency?.toUpperCase() ?? null;
+  const nextCur = region.currency.toUpperCase();
+  const changed = prevCc !== nextCc || prevCur !== nextCur;
+
+  cache.country = nextCc;
+  cache.currency = nextCur;
+  activeStoreRegion = region;
+
+  if (changed && prevCc != null) {
+    for (const q of Object.values(cache.quotes)) {
+      q.currentInr = null;
+      q.lowestInr = null;
+      q.retailInr = null;
+      q.itadCheckedAt = null;
+      if (q.source === "steam+itad" || q.source === "steam+itad+cheapshark") {
+        q.source = "steam";
+      }
+    }
+    cache.updatedAt = new Date().toISOString();
+    await savePriceCache(cache);
+  } else if (prevCc == null || prevCur == null || changed) {
+    // Persist newly detected region (or currency fill-in) without wiping quotes
+    await savePriceCache(cache);
+  }
+
+  return cache;
+}
+
+export async function resolveAndApplyStoreRegion(
+  cache?: PriceCache,
+): Promise<{ region: StoreRegion; cache: PriceCache }> {
+  const loaded = cache ?? (await loadPriceCache());
+  const region = await resolveStoreRegionFromAccount({
+    cachedCountry: loaded.country,
+    cachedCurrency: loaded.currency,
+  });
+  await applyStoreRegionToCache(loaded, region);
+  return { region, cache: loaded };
+}
 
 export function normalizeTitle(title: string): string {
   return title
@@ -119,18 +206,21 @@ export function isQuoteLatestToday(
   );
 }
 
-/** Has a real Steam India hist low (ITAD). */
-export function quoteHasIndiaLow(
+/** Has a real Steam store hist low (ITAD) for the active country. */
+export function quoteHasStoreLow(
   quote: Pick<GamePriceQuote, "lowestInr"> | null | undefined,
 ): boolean {
   return quote != null && quote.lowestInr != null && quote.lowestInr > 0;
 }
 
+/** @deprecated Prefer quoteHasStoreLow */
+export const quoteHasIndiaLow = quoteHasStoreLow;
+
 /**
  * Quote is “fresh” for the weekly bar: ITAD was checked within 7 days
- * (with or without an India low — DLC/missing rows still settle).
+ * (with or without a store low — DLC/missing rows still settle).
  */
-export function isQuoteLatestIndiaLow(
+export function isQuoteLatestStoreLow(
   quote:
     | Pick<GamePriceQuote, "updatedAt" | "lowestInr" | "itadCheckedAt">
     | null
@@ -138,9 +228,13 @@ export function isQuoteLatestIndiaLow(
   now = new Date(),
 ): boolean {
   if (!quote) return false;
-  const stamp = quote.itadCheckedAt || (quoteHasIndiaLow(quote) ? quote.updatedAt : null);
+  const stamp =
+    quote.itadCheckedAt || (quoteHasStoreLow(quote) ? quote.updatedAt : null);
   return isWithinTtl(stamp, PRICE_CACHE_TTL_MS, now.getTime());
 }
+
+/** @deprecated Prefer isQuoteLatestStoreLow */
+export const isQuoteLatestIndiaLow = isQuoteLatestStoreLow;
 
 /** How many library titles have a fresh (≤7 day) ITAD check stored. */
 export function countLatestQuotes(
@@ -152,7 +246,7 @@ export function countLatestQuotes(
   let latest = 0;
   for (const title of titles) {
     const q = cache.quotes[normalizeTitle(title)];
-    if (isQuoteLatestIndiaLow(q, now)) latest += 1;
+    if (isQuoteLatestStoreLow(q, now)) latest += 1;
   }
   return { latest, total };
 }
@@ -172,12 +266,12 @@ export function pickOldestTitles(
       const q = cache.quotes[normalizeTitle(title)];
       const stamp = q?.itadCheckedAt || q?.updatedAt;
       const ts = stamp ? Date.parse(stamp) : 0;
-      const hasLow = quoteHasIndiaLow(q);
+      const hasLow = quoteHasStoreLow(q);
       const rankTs = Number.isFinite(ts) ? ts : 0;
       return {
         title,
         ts: rankTs,
-        latest: isQuoteLatestIndiaLow(q, now),
+        latest: isQuoteLatestStoreLow(q, now),
         hasLow,
       };
     })
@@ -198,8 +292,8 @@ export function isPriceCacheFresh(
   return isWithinTtl(cache.updatedAt, PRICE_CACHE_TTL_MS, now);
 }
 
-/** Library India lows are fresh for this week (all titles checked ≤7 days). */
-export function isIndiaLowsWeekFresh(
+/** Library store lows are fresh for this week (all titles checked ≤7 days). */
+export function isStoreLowsWeekFresh(
   titles: string[],
   cache: Pick<PriceCache, "quotes">,
   now = new Date(),
@@ -208,6 +302,9 @@ export function isIndiaLowsWeekFresh(
   const { latest, total } = countLatestQuotes(titles, cache, now);
   return total > 0 && latest >= total;
 }
+
+/** @deprecated Prefer isStoreLowsWeekFresh */
+export const isIndiaLowsWeekFresh = isStoreLowsWeekFresh;
 
 export function priceCacheAgeMs(
   cache: Pick<PriceCache, "updatedAt">,
@@ -313,7 +410,7 @@ async function steamStoreSearch(title: string): Promise<StoreSearchItem | null> 
     if (!term || seen.has(term.toLowerCase())) continue;
     seen.add(term.toLowerCase());
 
-    const items = await steamStoreSearchItems(term, "US");
+    const items = await steamStoreSearchItems(term, steamCc());
     if (!items.length) continue;
 
     const apps = items.filter((i) => i.type === "app");
@@ -351,7 +448,7 @@ function editionProxyRank(name: string): number {
 }
 
 /**
- * Find a soft-matched Steam India listing that still has a price
+ * Find a soft-matched Steam store listing that still has a price
  * (e.g. Horizon Complete Edition → Horizon Remastered).
  */
 async function findPricedEditionProxy(
@@ -373,9 +470,10 @@ async function findPricedEditionProxy(
 
   const seenApps = new Set<number>();
   const candidates: StoreSearchItem[] = [];
+  const cc = steamCc();
 
   for (const q of queries) {
-    const items = await steamStoreSearchItems(q, "IN");
+    const items = await steamStoreSearchItems(q, cc);
     for (const item of items) {
       if (item.type !== "app") continue;
       if (excludeAppId != null && item.id === excludeAppId) continue;
@@ -396,7 +494,7 @@ async function findPricedEditionProxy(
   );
 
   for (const c of candidates) {
-    const overview = await steamPriceOverview(c.id, "in");
+    const overview = await steamPriceOverview(c.id, cc);
     if (overview?.final != null && overview.final > 0) {
       return {
         appId: c.id,
@@ -490,11 +588,10 @@ async function itadBulkLookupSteamAppIds(
 }
 
 /**
- * Bulk Steam India current + store-low via POST /games/prices/v3
- * (country=IN, shops=61). One request covers up to 200 games — replaces
- * separate storelow + Steam price_overview calls.
+ * Bulk Steam current + store-low via POST /games/prices/v3
+ * (active country, shops=61). One request covers up to 200 games.
  */
-async function itadBulkSteamIndiaPrices(itadIds: string[]): Promise<
+async function itadBulkSteamStorePrices(itadIds: string[]): Promise<
   Map<
     string,
     {
@@ -516,6 +613,7 @@ async function itadBulkSteamIndiaPrices(itadIds: string[]): Promise<
   const key = await resolveItadApiKey();
   if (!key) return out;
 
+  const country = itadCountry();
   const unique = [...new Set(itadIds.filter(Boolean))];
   const CHUNK = 200;
   for (let i = 0; i < unique.length; i += CHUNK) {
@@ -534,7 +632,7 @@ async function itadBulkSteamIndiaPrices(itadIds: string[]): Promise<
           }>;
         }>
       >(
-        `https://api.isthereanydeal.com/games/prices/v3?key=${encodeURIComponent(key)}&country=IN&shops=${ITAD_STEAM_SHOP}`,
+        `https://api.isthereanydeal.com/games/prices/v3?key=${encodeURIComponent(key)}&country=${encodeURIComponent(country)}&shops=${ITAD_STEAM_SHOP}`,
         {
           itad: true,
           method: "POST",
@@ -570,6 +668,9 @@ async function itadBulkSteamIndiaPrices(itadIds: string[]): Promise<
   }
   return out;
 }
+
+/** @deprecated */
+const itadBulkSteamIndiaPrices = itadBulkSteamStorePrices;
 
 function softRelatedQuote(
   key: string,
@@ -653,7 +754,7 @@ function backfillEditionLowsFromRelated(cache: PriceCache): void {
 }
 
 /**
- * Owned edition unlisted in India (no current / no ITAD low) → price from a
+ * Owned edition unlisted in the store (no current / no ITAD low) → price from a
  * still-listed soft-matched edition (Complete Edition → Remastered).
  */
 async function backfillUnlistedFromAvailableEditions(
@@ -703,10 +804,10 @@ async function backfillUnlistedFromAvailableEditions(
     );
   if (!withItad.length) return;
 
-  const prices = await itadBulkSteamIndiaPrices(withItad.map((p) => p.itadId));
+  const prices = await itadBulkSteamStorePrices(withItad.map((p) => p.itadId));
   const stillNeed = withItad.filter((p) => prices.get(p.itadId)?.lowestInr == null);
   const storeLows = stillNeed.length
-    ? await itadBulkSteamIndiaStoreLows(stillNeed.map((p) => p.itadId))
+    ? await itadBulkSteamStoreLows(stillNeed.map((p) => p.itadId))
     : new Map<string, number | null>();
 
   for (const p of withItad) {
@@ -723,10 +824,10 @@ async function backfillUnlistedFromAvailableEditions(
 }
 
 /**
- * Bulk Steam India store-lows via POST /games/storelow/v2.
+ * Bulk Steam store-lows via POST /games/storelow/v2.
  * Used when prices/v3 returns current but no storeLow / historyLow.
  */
-async function itadBulkSteamIndiaStoreLows(
+async function itadBulkSteamStoreLows(
   itadIds: string[],
 ): Promise<Map<string, number | null>> {
   const out = new Map<string, number | null>();
@@ -734,6 +835,7 @@ async function itadBulkSteamIndiaStoreLows(
   const key = await resolveItadApiKey();
   if (!key) return out;
 
+  const country = itadCountry();
   const unique = [...new Set(itadIds.filter(Boolean))];
   const CHUNK = 200;
   for (let i = 0; i < unique.length; i += CHUNK) {
@@ -748,7 +850,7 @@ async function itadBulkSteamIndiaStoreLows(
           }>;
         }>
       >(
-        `https://api.isthereanydeal.com/games/storelow/v2?key=${encodeURIComponent(key)}&country=IN&shops=${ITAD_STEAM_SHOP}`,
+        `https://api.isthereanydeal.com/games/storelow/v2?key=${encodeURIComponent(key)}&country=${encodeURIComponent(country)}&shops=${ITAD_STEAM_SHOP}`,
         {
           itad: true,
           method: "POST",
@@ -772,15 +874,18 @@ async function itadBulkSteamIndiaStoreLows(
   return out;
 }
 
+/** @deprecated */
+const itadBulkSteamIndiaStoreLows = itadBulkSteamStoreLows;
+
 /**
- * Apply India current + hist lows using minimal ITAD traffic:
+ * Apply store current + hist lows using minimal ITAD traffic:
  * - 0–1 bulk shop lookups (only for titles missing cached itadId)
  * - 1 bulk prices/v3 call per ≤200 games (current + Steam store low)
  * - 1 bulk storelow/v2 for any still missing a low
- * Reuses cached itadId. Re-fetches when a title has no India low yet
+ * Reuses cached itadId. Re-fetches when a title has no store low yet
  * (even if it was “checked” this week).
  */
-async function enrichWithItadIndiaLows(
+async function enrichWithItadStoreLows(
   cache: PriceCache,
   titles: string[],
 ): Promise<void> {
@@ -795,7 +900,7 @@ async function enrichWithItadIndiaLows(
     if (!q) continue;
     // Keep existing lows that are still within the weekly TTL.
     // Titles checked but still missing a low are retried.
-    if (quoteHasIndiaLow(q) && isQuoteLatestIndiaLow(q)) continue;
+    if (quoteHasStoreLow(q) && isQuoteLatestStoreLow(q)) continue;
     if (q.steamAppId == null) {
       q.itadCheckedAt = nowIso;
       q.updatedAt = nowIso;
@@ -838,7 +943,7 @@ async function enrichWithItadIndiaLows(
   }
 
   if (withItad.length) {
-    const prices = await itadBulkSteamIndiaPrices(
+    const prices = await itadBulkSteamStorePrices(
       withItad.map((n) => n.itadId),
     );
     const stillNeedLow = withItad.filter((n) => {
@@ -846,7 +951,7 @@ async function enrichWithItadIndiaLows(
       return row?.lowestInr == null;
     });
     const storeLows = stillNeedLow.length
-      ? await itadBulkSteamIndiaStoreLows(stillNeedLow.map((n) => n.itadId))
+      ? await itadBulkSteamStoreLows(stillNeedLow.map((n) => n.itadId))
       : new Map<string, number | null>();
 
     for (const n of withItad) {
@@ -867,7 +972,7 @@ async function enrichWithItadIndiaLows(
       if (q.currentInr != null && q.retailInr != null) {
         q.onSale = q.currentInr < q.retailInr;
       }
-      if (quoteHasIndiaLow(q) || row || storeLow != null) {
+      if (quoteHasStoreLow(q) || row || storeLow != null) {
         q.source = "steam+itad";
       }
       q.itadId = n.itadId;
@@ -879,6 +984,9 @@ async function enrichWithItadIndiaLows(
   backfillEditionLowsFromRelated(cache);
   await backfillUnlistedFromAvailableEditions(cache, titles);
 }
+
+/** @deprecated */
+const enrichWithItadIndiaLows = enrichWithItadStoreLows;
 
 function unresolvedQuote(
   title: string,
@@ -922,9 +1030,9 @@ async function refreshOneTitle(
         ? hit.price.final / 100
         : await steamPrice(hit.id, "us");
 
-    const inOverview = await steamPriceOverview(hit.id, "in");
-    const currentInr = inOverview?.final ?? null;
-    const retailInr = inOverview?.initial ?? null;
+    const localOverview = await steamPriceOverview(hit.id, steamCc());
+    const currentInr = localOverview?.final ?? null;
+    const retailInr = localOverview?.initial ?? null;
     const retailUsd =
       hit.price != null ? hit.price.initial / 100 : currentUsd;
 
@@ -1020,7 +1128,9 @@ async function refreshPricesForTitlesUnlocked(
   titles: string[],
   opts?: RefreshPricesOptions,
 ): Promise<PriceCache> {
-  const cache = await loadPriceCache();
+  let cache = await loadPriceCache();
+  const { cache: regionCache } = await resolveAndApplyStoreRegion(cache);
+  cache = regionCache;
   const limit = opts?.limit ?? 200;
   const itadOn = await hasItadApiKey();
   const fastPath = opts?.itadFastPath ?? itadOn;
@@ -1033,8 +1143,8 @@ async function refreshPricesForTitlesUnlocked(
 
     if (!opts?.force) {
       if (itadOn) {
-        // Only skip when we already have a fresh India low. Missing lows retry.
-        if (isQuoteLatestIndiaLow(existing) && quoteHasIndiaLow(existing)) {
+        // Only skip when we already have a fresh store low. Missing lows retry.
+        if (isQuoteLatestStoreLow(existing) && quoteHasStoreLow(existing)) {
           continue;
         }
       } else if (
@@ -1052,7 +1162,7 @@ async function refreshPricesForTitlesUnlocked(
   await opts?.onProgress?.({ done: 0, total });
 
   // 1) Only resolve Steam app ids when missing — skip live Steam price fetches
-  //    on the fast path (ITAD prices/v3 supplies currentInr + lowestInr).
+  //    on the fast path (ITAD prices/v3 supplies current + lowest).
   let completed = 0;
   const needSteam: string[] = [];
   for (const title of queue) {
@@ -1070,7 +1180,7 @@ async function refreshPricesForTitlesUnlocked(
     await mapPool(needSteam, TITLE_CONCURRENCY, async (title) => {
       const key = normalizeTitle(title);
       const quote = await refreshOneTitleGuarded(title, cache.quotes[key]);
-      // On fast path we only need the app id; live INR comes from ITAD next
+      // On fast path we only need the app id; live store price comes from ITAD next
       cache.quotes[key] = quote;
       completed += 1;
       await opts?.onProgress?.({ done: completed, total });
@@ -1083,7 +1193,7 @@ async function refreshPricesForTitlesUnlocked(
 
   // 2) Bulk ITAD: ≤1 lookup (missing itadIds) + 1 prices/v3 for the whole queue
   if (itadOn && queue.length) {
-    await enrichWithItadIndiaLows(cache, queue);
+    await enrichWithItadStoreLows(cache, queue);
   } else if (!fastPath && !itadOn && needSteam.length === 0) {
     // No ITAD and all had app ids — still nothing to do for weekly lows
   }

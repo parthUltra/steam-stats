@@ -9,17 +9,17 @@ const TERMS: { id: string; term: string; body: string }[] = [
   {
     id: "shelf-now",
     term: "Shelf now",
-    body: "What your playable library would cost today on Steam India (live store price when known).",
+    body: "What your playable library would cost today on Steam (live store price when known).",
   },
   {
     id: "lowest",
     term: "Lowest",
-    body: "All-time low on Steam India from IsThereAnyDeal. While calibrating, missing lows fall back to shelf now so the total is not blank.",
+    body: "Steam all-time low from IsThereAnyDeal. While calibrating, missing lows fall back to shelf now so the total is not blank.",
   },
   {
     id: "calibrating",
     term: "Calibrating",
-    body: "India lows are still being fetched or cached for this week. Progress shows under Paid vs shelf.",
+    body: "Store lows are still being fetched or cached for this week. Progress shows under Paid vs shelf.",
   },
   {
     id: "blended",
@@ -38,8 +38,8 @@ const TERMS: { id: string; term: string; body: string }[] = [
   },
   {
     id: "india-lows",
-    term: "Get India lows",
-    body: "Connect a free IsThereAnyDeal API key (stored only on this machine) to fill historical Steam India lows.",
+    term: "Get store lows",
+    body: "Connect a free IsThereAnyDeal API key (stored only on this machine) to fill historical Steam store lows.",
   },
   {
     id: "shortcuts",
