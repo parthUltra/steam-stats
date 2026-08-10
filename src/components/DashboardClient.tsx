@@ -26,6 +26,21 @@ export function DashboardClient({
   const [error, setError] = useState<string | null>(initialError);
   const [loading, setLoading] = useState(!initialData && !initialError);
 
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
+    try {
+      const next = await fetchDashboard();
+      setData(next);
+      setError(null);
+      return next;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load");
+      return null;
+    } finally {
+      if (!opts?.silent) setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -46,17 +61,41 @@ export function DashboardClient({
     };
   }, []);
 
-  const retry = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setData(await fetchDashboard());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setLoading(false);
-    }
+  // Weekly India lows: start a one-shot refresh only if stored data is stale (>7 days)
+  useEffect(() => {
+    void fetch("/api/refresh-prices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).catch(() => undefined);
   }, []);
+
+  // Dev: refresh data when files change (HMR) or the tab is focused.
+  // Also poll slowly so background price updates show up without a hard reload.
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+
+    const onDevRefresh = () => {
+      void load({ silent: true });
+    };
+    const onFocus = () => {
+      void load({ silent: true });
+    };
+    window.addEventListener("steam-stats:dev-refresh", onDevRefresh);
+    window.addEventListener("focus", onFocus);
+    const id = window.setInterval(() => {
+      void load({ silent: true });
+    }, 8_000);
+    return () => {
+      window.removeEventListener("steam-stats:dev-refresh", onDevRefresh);
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(id);
+    };
+  }, [load]);
+
+  const retry = useCallback(async () => {
+    await load();
+  }, [load]);
 
   if (loading && !data) {
     return (
@@ -103,5 +142,5 @@ export function DashboardClient({
 
   if (!data) return null;
 
-  return <DashboardView data={data} />;
+  return <DashboardView data={data} onRefresh={retry} />;
 }

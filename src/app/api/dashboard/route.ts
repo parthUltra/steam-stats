@@ -2,15 +2,16 @@ import { NextResponse } from "next/server";
 import { buildDashboard } from "@/lib/analytics/dashboard";
 
 export const dynamic = "force-dynamic";
-/** Price refresh uses async pool (concurrency 3) + Steam rate limiter; usually finishes under this budget. */
-export const maxDuration = 120;
+/** Price refresh is background-only; dashboard is cache-read. */
+export const maxDuration = 60;
 
 export async function GET() {
   try {
-    // Tops up missing/stale quotes (24h TTL); force via CLI: npm run refresh:prices
+    // Cache only — never hit Steam/ITAD/CheapShark on dashboard load.
+    // Weekly / manual refresh runs via /api/refresh-prices in the background.
     const data = await buildDashboard({
       refreshPrices: false,
-      priceLimit: 80,
+      priceLimit: 0,
     });
     return NextResponse.json(data);
   } catch (err) {

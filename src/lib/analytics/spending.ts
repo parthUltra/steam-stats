@@ -341,11 +341,6 @@ export function buildSpendingAnalytics(
       `${pctBoughtOnSale.toFixed(0)}% of purchases were on sale; you still buy full-price fairly often.`,
     );
   }
-  if (giftSpend > 0) {
-    habits.push(
-      `Gifts you sent: ${currency} ${giftSpend.toLocaleString()} (separate from library spend & shelf value).`,
-    );
-  }
   if (valve.packageOnlySavings && valve.packageOnlySpend) {
     habits.push(
       `Steam's package ledger shows meaningful sale savings vs what you paid for packages (shown in your spend currency on the dashboard).`,

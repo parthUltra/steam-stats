@@ -13,6 +13,9 @@ import {
 /** Below this, playtime is too noisy for ₹/hr — treat as unplayed. */
 export const MIN_PLAYED_HOURS_FOR_RATE = 0.5; // 30 minutes
 
+/** Divisor floor so cost/hr never exceeds what you paid for the game. */
+export const MIN_HOURS_DIVISOR = 1;
+
 export type CostPerHourGame = {
   title: string;
   steamAppId: number | null;
@@ -94,6 +97,11 @@ function matchPlaytime(
   return best;
 }
 
+/** Hours used as the cost/hr divisor — at least 1h so rate ≤ paid. */
+export function hoursForCostRate(hours: number): number {
+  return Math.max(hours, MIN_HOURS_DIVISOR);
+}
+
 export function buildCostPerHourAnalytics(
   valuationGames: ValuationGame[],
   playtimeGames: PlayedGame[],
@@ -129,7 +137,7 @@ export function buildCostPerHourAnalytics(
       steamAppId,
       paid: g.paid,
       hours,
-      costPerHour: rateable ? g.paid / hours : null,
+      costPerHour: rateable ? g.paid / hoursForCostRate(hours) : null,
       current: g.current,
       isGift: g.isGift,
     });
@@ -144,7 +152,10 @@ export function buildCostPerHourAnalytics(
     .sort((a, b) => b.paid - a.paid);
 
   const totalPaidMatched = playedPaid.reduce((s, g) => s + g.paid, 0);
-  const totalHoursMatched = playedPaid.reduce((s, g) => s + g.hours, 0);
+  const totalHoursMatched = playedPaid.reduce(
+    (s, g) => s + hoursForCostRate(g.hours),
+    0,
+  );
   const blendedCostPerHour =
     totalHoursMatched > 0 ? totalPaidMatched / totalHoursMatched : null;
 
@@ -165,6 +176,6 @@ export function buildCostPerHourAnalytics(
     worstValue: playedPaid.length ? playedPaid[playedPaid.length - 1] : null,
     biggestUnplayed: unplayedPaid[0] ?? null,
     matchedCount: games.length,
-    note: "Cost/hr uses paid from purchase line items and lifetime hours from Account Data / Steam API. Edition packs roll into the base game when both are owned. Bundles are excluded. Under 30 minutes counts as unplayed.",
+    note: "Cost/hr uses paid from purchase line items and lifetime hours from Account Data / Steam API. Under 1 hour played counts as 1 hour (so cost/hr never exceeds what you paid). Edition packs roll into the base when both are owned. Bundles are excluded. Under 30 minutes counts as unplayed.",
   };
 }

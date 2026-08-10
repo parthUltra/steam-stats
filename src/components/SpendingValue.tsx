@@ -1,9 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Loader2Icon, RefreshCwIcon, XIcon } from "lucide-react";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
 import type { CostPerHourGame } from "@/lib/analytics/cost-per-hour";
-import { effectiveShelfNow } from "@/lib/analytics/valuation";
+import {
+  effectiveShelfLowest,
+  effectiveShelfLowestBestKnown,
+  effectiveShelfNow,
+} from "@/lib/analytics/valuation";
+import { isRedundantPackSku } from "@/lib/analytics/edition-packs";
+import { titlesSoftMatch } from "@/lib/analytics/acquisition";
 import { SteamArt } from "@/components/SteamArt";
 import {
   formatPlayHours,
@@ -13,6 +21,7 @@ import {
 import type { ArtworkUrls } from "@/lib/steam/artwork-resolve";
 import { resolveArtworkAppId, resolveSteamAppId } from "@/lib/steam/resolve-app-id";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   ToggleGroup,
@@ -29,6 +38,21 @@ function moneyFmt(n: number, currency: string) {
   } catch {
     return `${currency} ${Math.round(n).toLocaleString()}`;
   }
+}
+
+function giftTitlesMatch(a: string, b: string): boolean {
+  const loose = (t: string) =>
+    t
+      .toLowerCase()
+      .replace(/™|®/g, "")
+      .replace(/[-–—:!?.]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  return (
+    loose(a) === loose(b) ||
+    titlesSoftMatch(a, b) ||
+    a.toLowerCase() === b.toLowerCase()
+  );
 }
 
 function moneyPerHourFmt(n: number, currency: string) {
@@ -64,24 +88,336 @@ function SteamThumb({
   );
 }
 
+type InspectMode = "spent" | "shelfNow" | "lowest";
+type InspectSortKey = "alpha" | "price";
+type InspectSortDir = "asc" | "desc";
+type InspectSort = { key: InspectSortKey; dir: InspectSortDir };
+
+type ValuationGameRow = DashboardPayload["valuation"]["games"][number];
+
+type InspectRow = {
+  game: ValuationGameRow;
+  amount: number | null;
+};
+
+function looksLikeAddonPack(title: string): boolean {
+  return /\b(collaboration pack|collab pack|cosmetic pack|soundtrack|deluxe upgrade|season pass)\b/i.test(
+    title,
+  );
+}
+
+/** Hide freebie DLC / collab packs that only clutter Lowest (₹0, no live price). */
+function isRedundantLowestRow(
+  game: ValuationGameRow,
+  games: ValuationGameRow[],
+): boolean {
+  if (isRedundantPackSku(game, games)) return true;
+
+  // Complimentary free rows: Butcher's Circus, Dredge collab, etc.
+  if (game.kind === "free") return true;
+
+  // Free/unresolved addon sharing the base game's Steam app id
+  if (
+    game.steamAppId != null &&
+    looksLikeAddonPack(game.title) &&
+    games.some(
+      (o) =>
+        o !== game &&
+        o.steamAppId === game.steamAppId &&
+        o.kind !== "free" &&
+        !looksLikeAddonPack(o.title),
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildInspectRows(
+  games: ValuationGameRow[],
+  mode: InspectMode,
+  opts?: { calibrating?: boolean },
+): InspectRow[] {
+  const rows: InspectRow[] = [];
+  for (const game of games) {
+    if (game.kind === "gifted_by_me") continue;
+
+    if (mode === "spent") {
+      // Include pack/collection purchases — they are real wallet spend
+      if (game.paid != null && game.paid > 0) {
+        rows.push({ game, amount: game.paid });
+      }
+      continue;
+    }
+
+    if (mode === "shelfNow") {
+      if (isRedundantPackSku(game, games)) continue;
+      // Don't list free addon packs that only exist as collab/DLC rows
+      if (game.kind === "free" && looksLikeAddonPack(game.title)) continue;
+      if (
+        game.kind === "free" &&
+        game.steamAppId != null &&
+        games.some(
+          (o) =>
+            o !== game &&
+            o.steamAppId === game.steamAppId &&
+            o.kind !== "free",
+        )
+      ) {
+        continue;
+      }
+      const now = effectiveShelfNow(game);
+      if (now != null) rows.push({ game, amount: now });
+      continue;
+    }
+
+    // Lowest
+    if (isRedundantLowestRow(game, games)) continue;
+
+    const low = opts?.calibrating
+      ? effectiveShelfLowestBestKnown(game)
+      : effectiveShelfLowest(game);
+    const bought =
+      (game.paid != null && game.paid > 0) || game.kind === "purchased";
+    const onShelf = effectiveShelfNow(game) != null;
+    if (low != null || bought || onShelf) {
+      rows.push({ game, amount: low });
+    }
+  }
+  return rows;
+}
+
+function ShelfInspectModal({
+  mode,
+  total,
+  games,
+  money,
+  artwork,
+  sort,
+  onSort,
+  onClose,
+  calibrating,
+}: {
+  mode: InspectMode;
+  total: number;
+  games: ValuationGameRow[];
+  money: (n: number) => string;
+  artwork?: Record<string, ArtworkUrls>;
+  sort: InspectSort;
+  onSort: (s: InspectSort) => void;
+  onClose: () => void;
+  calibrating?: boolean;
+}) {
+  const title =
+    mode === "spent" ? "You spent" : mode === "shelfNow" ? "Shelf now" : "Lowest";
+  const tone =
+    mode === "spent" ? "amber" : mode === "shelfNow" ? "cyan" : "rose";
+  const blurb =
+    mode === "spent"
+      ? "What you paid per library title (wallet purchases)."
+      : mode === "shelfNow"
+        ? "Live Steam India price per playable game."
+        : "Steam India all-time low when stored — bought titles without a low still appear as —.";
+
+  const rows = useMemo(() => {
+    const list = buildInspectRows(games, mode, { calibrating });
+    const dir = sort.dir === "asc" ? 1 : -1;
+    list.sort((a, b) => {
+      if (sort.key === "alpha") {
+        return (
+          dir *
+            a.game.title.localeCompare(b.game.title, undefined, {
+              sensitivity: "base",
+            }) || (a.amount ?? 0) - (b.amount ?? 0)
+        );
+      }
+      const aa = a.amount;
+      const bb = b.amount;
+      // Missing lows sort to the end
+      if (aa == null && bb == null) {
+        return a.game.title.localeCompare(b.game.title, undefined, {
+          sensitivity: "base",
+        });
+      }
+      if (aa == null) return 1;
+      if (bb == null) return -1;
+      return (
+        dir * (aa - bb) ||
+        a.game.title.localeCompare(b.game.title, undefined, {
+          sensitivity: "base",
+        })
+      );
+    });
+    return list;
+  }, [games, mode, sort, calibrating]);
+
+  const toggleSort = (key: InspectSortKey) => {
+    if (sort.key === key) {
+      onSort({ key, dir: sort.dir === "asc" ? "desc" : "asc" });
+      return;
+    }
+    // Default: A–Z ascending, price descending (highest first)
+    onSort({ key, dir: key === "price" ? "desc" : "asc" });
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  const alphaLabel = sort.key === "alpha" && sort.dir === "desc" ? "Z–A" : "A–Z";
+  const priceLabel =
+    sort.key === "price" && sort.dir === "asc" ? "Price ↑" : "Price ↓";
+
+  return createPortal(
+    <div
+      className="shelf-inspect-backdrop"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        className="shelf-inspect-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shelf-inspect-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="shelf-inspect-head">
+          <div className="shelf-inspect-head-top">
+            <h3 id="shelf-inspect-title">{title}</h3>
+            <div className="shelf-inspect-tools">
+              <div
+                className="shelf-inspect-sort"
+                role="group"
+                aria-label="Sort games"
+              >
+                <button
+                  type="button"
+                  className={
+                    sort.key === "alpha"
+                      ? "shelf-inspect-sort-btn is-active"
+                      : "shelf-inspect-sort-btn"
+                  }
+                  onClick={() => toggleSort("alpha")}
+                  aria-pressed={sort.key === "alpha"}
+                  title="Sort by name — click again to reverse"
+                >
+                  {alphaLabel}
+                </button>
+                <button
+                  type="button"
+                  className={
+                    sort.key === "price"
+                      ? "shelf-inspect-sort-btn is-active"
+                      : "shelf-inspect-sort-btn"
+                  }
+                  onClick={() => toggleSort("price")}
+                  aria-pressed={sort.key === "price"}
+                  title="Sort by price — click again to reverse"
+                >
+                  {priceLabel}
+                </button>
+              </div>
+              <button
+                type="button"
+                className="shelf-inspect-close"
+                onClick={onClose}
+                aria-label="Close"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+          </div>
+          <p className="shelf-inspect-blurb">
+            {blurb}{" "}
+            <strong className={`mono ${tone}`}>{money(total)}</strong>
+            {rows.length > 0 ? ` · ${rows.length} titles` : ""}
+          </p>
+        </div>
+
+        {rows.length === 0 ? (
+          <p className="shelf-inspect-empty">Nothing to show for this total.</p>
+        ) : (
+          <div className="shelf-inspect-scroll">
+            <div className="shelf-inspect-grid">
+              {rows.map(({ game, amount }) => {
+                const body = (
+                  <>
+                    <div className="shelf-inspect-art">
+                      <SteamThumb
+                        appId={game.steamAppId}
+                        name={game.title}
+                        variant="portrait"
+                        artwork={artwork}
+                      />
+                    </div>
+                    <div className="shelf-inspect-card-body">
+                      <h4>{game.title}</h4>
+                      <strong className={`mono ${tone}`}>
+                        {amount != null ? money(amount) : "—"}
+                      </strong>
+                    </div>
+                  </>
+                );
+                if (game.steamAppId) {
+                  return (
+                    <a
+                      key={game.title}
+                      className="shelf-inspect-card"
+                      href={steamStoreUrl(game.steamAppId)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {body}
+                    </a>
+                  );
+                }
+                return (
+                  <div key={game.title} className="shelf-inspect-card">
+                    {body}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function TelemetryDuel({
   spent,
   current,
   lowest,
   money,
   purchaseCount,
-  includeUnpaid,
-  onToggleUnpaid,
-  unpaidBoost,
+  showExcludeGiftsToggle,
+  excludeReceivedGifts,
+  onExcludeReceivedGifts,
+  calibrating,
+  onInspect,
 }: {
   spent: number;
   current: number;
   lowest: number;
   money: (n: number) => string;
   purchaseCount: number;
-  includeUnpaid: boolean;
-  onToggleUnpaid: (v: boolean) => void;
-  unpaidBoost: number;
+  showExcludeGiftsToggle: boolean;
+  excludeReceivedGifts: boolean;
+  onExcludeReceivedGifts: (v: boolean) => void;
+  calibrating?: boolean;
+  onInspect: (mode: InspectMode) => void;
 }) {
   const max = Math.max(spent, current, lowest, 1);
   const ahead = current >= spent;
@@ -94,37 +430,68 @@ function TelemetryDuel({
       <div className="telemetry-head">
         <div>
           <h3>Paid vs shelf</h3>
+          <p className="telemetry-lede">
+            Click a total to inspect every title. Spent is wallet purchases;
+            shelf now and lowest value playable games
+            {showExcludeGiftsToggle && excludeReceivedGifts
+              ? " (gifts received excluded)."
+              : "."}
+            {calibrating
+              ? " Lowest is still calibrating — hist low when known, else shelf now."
+              : ""}
+          </p>
         </div>
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Switch
-            checked={includeUnpaid}
-            onCheckedChange={onToggleUnpaid}
-            size="sm"
-          />
-          <span>Include free &amp; gifted to me</span>
-        </label>
+        {showExcludeGiftsToggle ? (
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Switch
+              checked={excludeReceivedGifts}
+              onCheckedChange={onExcludeReceivedGifts}
+              size="sm"
+            />
+            <span>Exclude gifts from shelf now &amp; lowest</span>
+          </label>
+        ) : null}
       </div>
 
-      <div className="telemetry-duel">
-        <div className="telemetry-stat spent">
+      <div className="telemetry-duel telemetry-duel-triple">
+        <button
+          type="button"
+          className="telemetry-stat spent telemetry-stat-btn"
+          onClick={() => onInspect("spent")}
+        >
           <span className="telemetry-label">You spent</span>
           <strong className="telemetry-num amber">{money(spent)}</strong>
-          <span className="telemetry-sub">{purchaseCount} library buys</span>
-        </div>
+          <span className="telemetry-sub">{purchaseCount} library buys · view</span>
+        </button>
         <div className="telemetry-vs" aria-hidden>
           <span>{ahead ? "▲" : "▼"}</span>
           <small>{money(delta)}</small>
         </div>
-        <div className="telemetry-stat now">
+        <button
+          type="button"
+          className="telemetry-stat now telemetry-stat-btn"
+          onClick={() => onInspect("shelfNow")}
+        >
           <span className="telemetry-label">Shelf now</span>
           <strong className="telemetry-num cyan">{money(current)}</strong>
-          <span className="telemetry-sub">
-            Best known {money(lowest)}
-            {includeUnpaid && unpaidBoost > 0
-              ? ` · +${money(unpaidBoost)} unpaid`
-              : ""}
+          <span className="telemetry-sub">Live India · view</span>
+        </button>
+        <button
+          type="button"
+          className="telemetry-stat low telemetry-stat-btn"
+          onClick={() => onInspect("lowest")}
+        >
+          <span className="telemetry-label">
+            Lowest
+            {calibrating ? (
+              <Loader2Icon className="telemetry-lowest-spinner" aria-hidden />
+            ) : null}
           </span>
-        </div>
+          <strong className="telemetry-num rose">{money(lowest)}</strong>
+          <span className="telemetry-sub">
+            {calibrating ? "Calibrating · view" : "India hist · view"}
+          </span>
+        </button>
       </div>
 
       <div className="tug">
@@ -140,11 +507,48 @@ function TelemetryDuel({
         </div>
         <div className="tug-legend">
           <span className="amber">Paid</span>
-          <span className="cyan">Market now</span>
-          <span className="rose">Best known {money(lowest)}</span>
+          <span className="cyan">Shelf now</span>
+          <span className="rose">Lowest</span>
         </div>
       </div>
     </section>
+  );
+}
+
+function LowsLatestBar({
+  latest,
+  total,
+}: {
+  latest: number;
+  total: number;
+}) {
+  if (total <= 0) return null;
+  const clamped = Math.max(0, Math.min(latest, total));
+  const pct = Math.min(100, Math.round((clamped / total) * 100));
+  const allLatest = clamped >= total;
+
+  return (
+    <div
+      className="lows-refresh-progress"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={total}
+      aria-valuenow={clamped}
+      aria-label="Titles with fresh India lows"
+    >
+      <span className="lows-refresh-progress-label">
+        <span>{allLatest ? "Up to date · 7d" : "India lows · 7d"}</span>
+      </span>
+      <div className="lows-refresh-progress-track">
+        <span
+          className="lows-refresh-progress-fill"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="lows-refresh-progress-count mono">
+        {clamped}/{total}
+      </span>
+    </div>
   );
 }
 
@@ -392,115 +796,6 @@ function PaymentStack({
   );
 }
 
-function kindChip(kind: DashboardPayload["valuation"]["games"][number]["kind"]) {
-  if (kind === "gifted_to_me") return { label: "Gifted to me", className: "gift-in" };
-  if (kind === "free") return { label: "Free", className: "free" };
-  if (kind === "gifted_by_me") return { label: "Gifted away", className: "gift" };
-  return { label: "Purchased", className: "lib" };
-}
-
-function DealCard({
-  game,
-  money,
-  artwork,
-}: {
-  game: DashboardPayload["valuation"]["games"][number];
-  money: (n: number) => string;
-  artwork?: Record<string, ArtworkUrls>;
-}) {
-  const paid = game.paid ?? 0;
-  const nowListed =
-    game.current != null && game.current > 0 ? game.current : null;
-  const low = game.lowest != null && game.lowest > 0 ? game.lowest : null;
-  const valueNow = effectiveShelfNow(game);
-  const delta =
-    valueNow != null && game.paid != null ? valueNow - paid : null;
-  const goodDeal =
-    game.kind === "purchased" &&
-    paid > 0 &&
-    valueNow != null &&
-    valueNow > 0 &&
-    paid < valueNow * 0.7;
-  const chip = kindChip(game.kind);
-  const paidLabel =
-    game.isUnpaidShelf || paid === 0
-      ? "Free"
-      : game.paid != null
-        ? money(paid)
-        : "—";
-
-  const body = (
-    <>
-      <SteamThumb
-        appId={game.steamAppId}
-        name={game.title}
-        variant="portrait"
-        artwork={artwork}
-      />
-      <div className="deal-card-body">
-        <div className="deal-card-top">
-          <span className={`deal-chip ${chip.className}`}>{chip.label}</span>
-          {goodDeal ? <span className="deal-chip win">Under shelf</span> : null}
-          {game.onSale ? <span className="deal-chip sale">On sale</span> : null}
-          {nowListed == null && low != null ? (
-            <span className="deal-chip muted-chip">Unlisted</span>
-          ) : null}
-        </div>
-        <h4>{game.title}</h4>
-        <div className="deal-prices">
-          <div>
-            <span>Paid</span>
-            <strong className="amber">{paidLabel}</strong>
-          </div>
-          <div>
-            <span>Now</span>
-            <strong className="cyan">
-              {nowListed != null ? money(nowListed) : "—"}
-            </strong>
-          </div>
-          <div>
-            <span>Low</span>
-            <strong className="rose">{low != null ? money(low) : "—"}</strong>
-          </div>
-        </div>
-        {game.isUnpaidShelf ? (
-          <p className="deal-delta up">On your shelf · free from your wallet</p>
-        ) : delta != null ? (
-          <p className={`deal-delta ${delta >= 0 ? "up" : "down"}`}>
-            {nowListed == null
-              ? `Using best known · ${
-                  delta >= 0
-                    ? `+${money(delta)} vs paid`
-                    : `${money(Math.abs(delta))} over low`
-                }`
-              : delta >= 0
-                ? `+${money(delta)} vs today`
-                : `${money(Math.abs(delta))} over today’s shelf`}
-          </p>
-        ) : (
-          <p className="deal-delta muted">Awaiting price match</p>
-        )}
-      </div>
-    </>
-  );
-
-  const cardClass = `deal-card ${game.isUnpaidShelf ? "unpaid" : ""} ${game.kind === "gifted_by_me" ? "gift" : ""}`;
-
-  if (game.steamAppId) {
-    return (
-      <a
-        className={cardClass}
-        href={steamStoreUrl(game.steamAppId)}
-        target="_blank"
-        rel="noreferrer"
-      >
-        {body}
-      </a>
-    );
-  }
-
-  return <div className={cardClass}>{body}</div>;
-}
 
 function CphSpotlight({
   label,
@@ -635,19 +930,248 @@ function CostPerHourRow({
   return <div className="cph-row">{body}</div>;
 }
 
-export function SpendingValue({ data }: { data: DashboardPayload }) {
+export function SpendingValue({
+  data,
+  onRefresh,
+}: {
+  data: DashboardPayload;
+  onRefresh?: () => Promise<void> | void;
+}) {
   const { spending, valuation, recentPurchases, meta, costPerHour, artwork, playtime } =
     data;
   const currency = valuation.currency || spending.currency;
   const money = (n: number) => moneyFmt(n, currency);
   const moneyHr = (n: number) => moneyPerHourFmt(n, currency);
-  const [includeUnpaid, setIncludeUnpaid] = useState(true);
-  const [filter, setFilter] = useState<"all" | "paid" | "unpaid">("all");
   const [cphView, setCphView] = useState<"best" | "worst" | "unplayed">(
     "best",
   );
   const [cphLimit, setCphLimit] = useState(12);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [inspectMode, setInspectMode] = useState<InspectMode | null>(null);
+  const [inspectSort, setInspectSort] = useState<InspectSort>({
+    key: "price",
+    dir: "desc",
+  });
+  const [excludeReceivedGifts, setExcludeReceivedGifts] = useState(false);
+  const [mailSyncing, setMailSyncing] = useState(false);
+  const [mailSyncError, setMailSyncError] = useState<string | null>(null);
+  const [mailSyncStatus, setMailSyncStatus] = useState<string | null>(null);
+  const [itadConnected, setItadConnected] = useState(
+    Boolean(meta.hasItadApiKey),
+  );
+  const [itadStep, setItadStep] = useState<"explain" | "paste" | null>(null);
+  const [itadKeyDraft, setItadKeyDraft] = useState("");
+  const [itadSaving, setItadSaving] = useState(false);
+  const [itadError, setItadError] = useState<string | null>(null);
+  const [itadStatus, setItadStatus] = useState<string | null>(null);
+  const [latestProgress, setLatestProgress] = useState<{
+    latest: number;
+    total: number;
+  } | null>(null);
+
+  const receivedGames = valuation.giftsReceivedGames ?? [];
+  const mailGifts = meta.mailGifts ?? [];
+  const hasReceivedGifts = receivedGames.length > 0 || mailGifts.length > 0;
+  const giftsSent = valuation.giftsSent;
+
+  const syncGmail = useCallback(async () => {
+    setMailSyncing(true);
+    setMailSyncError(null);
+    setMailSyncStatus(
+      "Opening a separate browser window for Gmail — your other windows stay open.",
+    );
+    try {
+      const res = await fetch("/api/gifts-received", { method: "POST" });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        status?: { phase?: string; message?: string; error?: string };
+      };
+      if (!res.ok || json.ok === false) {
+        throw new Error(json.error || "Gmail sync failed to start");
+      }
+      if (json.message) setMailSyncStatus(json.message);
+
+      const deadline = Date.now() + 12 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const poll = await fetch("/api/gifts-received");
+        const body = (await poll.json()) as {
+          sync?: {
+            phase?: string;
+            running?: boolean;
+            message?: string;
+            error?: string;
+            added?: number;
+            parsed?: number;
+            total?: number;
+          };
+        };
+        const sync = body.sync;
+        if (sync?.message) setMailSyncStatus(sync.message);
+
+        if (sync?.phase === "done") {
+          const added = sync.added ?? 0;
+          const total = sync.total ?? 0;
+          setMailSyncStatus(
+            added > 0
+              ? `Added ${added} · ${total} total`
+              : total > 0
+                ? `Up to date · ${total} gifts`
+                : "No new gifts found",
+          );
+          await onRefresh?.();
+          return;
+        }
+        if (sync?.phase === "error") {
+          throw new Error(sync.error || sync.message || "Gmail sync failed");
+        }
+        if (
+          !sync?.running &&
+          sync?.phase &&
+          sync.phase !== "starting" &&
+          sync.phase !== "awaiting_login" &&
+          sync.phase !== "scraping"
+        ) {
+          // finished without done — treat as error if still idle/error
+          if (sync.phase === "idle") {
+            throw new Error("Gmail sync did not start. Try again.");
+          }
+        }
+      }
+      throw new Error("Timed out waiting for Gmail sync to finish.");
+    } catch (err) {
+      setMailSyncError(err instanceof Error ? err.message : "Gmail sync failed");
+      setMailSyncStatus(null);
+    } finally {
+      setMailSyncing(false);
+    }
+  }, [onRefresh]);
+
+  // Clear the one-line success flash so it doesn’t sit under the heading.
+  useEffect(() => {
+    if (mailSyncing || mailSyncError || !mailSyncStatus) return;
+    const t = window.setTimeout(() => setMailSyncStatus(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [mailSyncing, mailSyncError, mailSyncStatus]);
+
+  useEffect(() => {
+    setItadConnected(Boolean(meta.hasItadApiKey));
+  }, [meta.hasItadApiKey]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("steam-stats-exclude-received-gifts");
+      if (raw === "1") setExcludeReceivedGifts(true);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const openItadExplain = useCallback(() => {
+    setItadError(null);
+    setItadStatus(null);
+    setItadKeyDraft("");
+    setItadStep("explain");
+  }, []);
+
+  const continueToItadApps = useCallback(() => {
+    window.open("https://isthereanydeal.com/apps/", "_blank", "noopener,noreferrer");
+    setItadStep("paste");
+  }, []);
+
+  const ensureWeeklyLows = useCallback(async (opts?: { force?: boolean }) => {
+    try {
+      await fetch("/api/refresh-prices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: Boolean(opts?.force) }),
+      });
+    } catch {
+      // ignore — bar still shows stored coverage
+    }
+  }, []);
+
+  const saveItadKey = useCallback(async () => {
+    setItadSaving(true);
+    setItadError(null);
+    try {
+      const res = await fetch("/api/itad-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: itadKeyDraft }),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok || json.ok === false) {
+        throw new Error(json.error || "Could not save API key");
+      }
+      setItadConnected(true);
+      setItadStep(null);
+      setItadKeyDraft("");
+      setItadSaving(false);
+      setItadStatus(json.message || "Key saved.");
+      void onRefresh?.();
+      // Force one weekly refresh so the new key is used once, then stored for ~7 days
+      void ensureWeeklyLows({ force: true });
+    } catch (err) {
+      setItadError(err instanceof Error ? err.message : "Could not save API key");
+      setItadStatus(null);
+      setItadSaving(false);
+    }
+  }, [ensureWeeklyLows, itadKeyDraft, onRefresh]);
+
+  // Poll stored weekly coverage; kick a refresh only when stale / not running
+  useEffect(() => {
+    let cancelled = false;
+    let lastLatest = -1;
+
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/refresh-prices");
+        const body = (await res.json()) as {
+          latest?: number;
+          total?: number;
+          running?: boolean;
+          weekFresh?: boolean;
+        };
+        if (cancelled) return;
+        const latest = body.latest ?? 0;
+        const total = body.total ?? 0;
+        if (total > 0) setLatestProgress({ latest, total });
+        if (latest !== lastLatest && lastLatest >= 0) {
+          void onRefresh?.();
+        }
+        lastLatest = latest;
+        if (!body.running && body.weekFresh === false) {
+          void ensureWeeklyLows();
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    void ensureWeeklyLows();
+    void poll();
+    const id = window.setInterval(() => void poll(), 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [ensureWeeklyLows, onRefresh]);
+
+  const setExclude = useCallback((v: boolean) => {
+    setExcludeReceivedGifts(v);
+    try {
+      localStorage.setItem("steam-stats-exclude-received-gifts", v ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const titleCatalog = useMemo(
     () => [
@@ -664,16 +1188,53 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
   );
 
   const spent = valuation.librarySpent;
-  const shelf = includeUnpaid ? valuation.shelfFull : valuation.shelfPaidOnly;
-  const unpaid = valuation.unpaidShelf;
-  const giftsSent = valuation.giftsSent;
+  const shelf =
+    hasReceivedGifts && excludeReceivedGifts
+      ? valuation.shelfExcludingReceivedGifts
+      : valuation.shelfFull;
 
-  const dealGames = useMemo(() => {
-    let list = valuation.games.filter((g) => g.resolved);
-    if (filter === "paid") list = list.filter((g) => g.kind === "purchased");
-    if (filter === "unpaid") list = list.filter((g) => g.isUnpaidShelf);
-    return list.slice(0, 18);
-  }, [valuation.games, filter]);
+  const lowsCalibrating =
+    !latestProgress ||
+    latestProgress.total <= 0 ||
+    latestProgress.latest < latestProgress.total;
+
+  /** While weekly refresh incomplete: hist low or shelf-now. When done: stored lows only. */
+  const displayedLowest = useMemo(() => {
+    if (!lowsCalibrating) return shelf.lowest;
+    const games = valuation.games.filter((g) => {
+      if (g.kind === "gifted_by_me") return false;
+      if (hasReceivedGifts && excludeReceivedGifts && g.kind === "gifted_to_me") {
+        return false;
+      }
+      return true;
+    });
+    let sum = 0;
+    for (const g of games) {
+      const v = effectiveShelfLowestBestKnown(g);
+      if (v != null) sum += v;
+    }
+    return sum;
+  }, [
+    lowsCalibrating,
+    shelf.lowest,
+    valuation.games,
+    hasReceivedGifts,
+    excludeReceivedGifts,
+  ]);
+
+  const inspectGames = useMemo(() => {
+    return valuation.games.filter((g) => {
+      if (g.kind === "gifted_by_me") return false;
+      if (
+        hasReceivedGifts &&
+        excludeReceivedGifts &&
+        g.kind === "gifted_to_me"
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [valuation.games, hasReceivedGifts, excludeReceivedGifts]);
 
   const cphFullList = useMemo(() => {
     if (cphView === "unplayed") return costPerHour.unplayedPaid;
@@ -700,7 +1261,7 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
         <div>
           <h2>Value & spending</h2>
           <p className="spend-lede">
-            Paid vs market in one readout — gifts you sent stay off the shelf.
+            Paid vs market in one readout.
           </p>
         </div>
         <div className="spend-toolbar-actions">
@@ -709,30 +1270,201 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
               ? `Quotes updated ${new Date(meta.priceCacheUpdatedAt).toLocaleString()}`
               : "Market quotes load automatically"}
           </p>
+          {!itadConnected ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={openItadExplain}
+            >
+              Get India lows
+            </Button>
+          ) : null}
+          {itadStatus ? <p className="meta-line">{itadStatus}</p> : null}
+          {itadError && !itadStep ? (
+            <p className="meta-line" style={{ color: "#f87171" }}>
+              {itadError}
+            </p>
+          ) : null}
         </div>
       </div>
+
+      {itadStep && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="itad-key-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="itad-key-title"
+              onClick={(e) => {
+                if (e.target === e.currentTarget && !itadSaving) {
+                  setItadStep(null);
+                  setItadError(null);
+                }
+              }}
+            >
+              <div className="itad-key-card">
+                {itadStep === "explain" ? (
+                  <>
+                    <h3 id="itad-key-title">Get Steam India all-time lows</h3>
+                    <ol className="itad-key-steps">
+                      <li>
+                        Continue opens IsThereAnyDeal Apps in a new tab (sign
+                        in there if asked).
+                      </li>
+                      <li>
+                        Register an app (any name, e.g.{" "}
+                        <span className="mono">steam-stats</span>) and copy the
+                        API key.
+                      </li>
+                      <li>
+                        Come back here, paste the key, and steam-stats stores
+                        it locally — then refreshes Lowest.
+                      </li>
+                    </ol>
+                    <p className="itad-key-note">
+                      No browser automation. Your key stays on this machine
+                      only.
+                    </p>
+                    <div className="itad-key-actions">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setItadStep(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={continueToItadApps}
+                      >
+                        Continue
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h3 id="itad-key-title">Paste your API key</h3>
+                    <p className="itad-key-note">
+                      After you create the key on IsThereAnyDeal, paste it
+                      below. If the other tab is still open, finish there
+                      first.
+                    </p>
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="Paste IsThereAnyDeal API key"
+                      value={itadKeyDraft}
+                      onChange={(e) => setItadKeyDraft(e.target.value)}
+                      disabled={itadSaving}
+                    />
+                    {itadError ? (
+                      <p className="itad-key-error">{itadError}</p>
+                    ) : null}
+                    <div className="itad-key-actions">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={itadSaving}
+                        onClick={() => {
+                          setItadStep(null);
+                          setItadError(null);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={itadSaving}
+                        onClick={continueToItadApps}
+                      >
+                        Open Apps again
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={
+                          itadSaving || itadKeyDraft.trim().length < 16
+                        }
+                        onClick={() => void saveItadKey()}
+                      >
+                        {itadSaving ? (
+                          <>
+                            <RefreshCwIcon
+                              data-icon="inline-start"
+                              className="animate-spin"
+                            />
+                            Saving…
+                          </>
+                        ) : (
+                          "Save key"
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
       <TelemetryDuel
         spent={spent}
         current={shelf.current}
-        lowest={shelf.lowest}
+        lowest={displayedLowest}
         money={money}
         purchaseCount={spending.purchaseCount}
-        includeUnpaid={includeUnpaid}
-        onToggleUnpaid={setIncludeUnpaid}
-        unpaidBoost={unpaid.current}
+        showExcludeGiftsToggle={hasReceivedGifts}
+        excludeReceivedGifts={excludeReceivedGifts}
+        onExcludeReceivedGifts={setExclude}
+        calibrating={lowsCalibrating}
+        onInspect={setInspectMode}
       />
 
-      <section className="spend-section cph-section">
-        <div className="spend-section-head">
-          <div>
-            <h3>Spend vs playtime</h3>
-            <p>
-              Cost per hour on library titles with a paid amount. Gifts you
-              sent are excluded.
-            </p>
+      {inspectMode ? (
+        <ShelfInspectModal
+          mode={inspectMode}
+          total={
+            inspectMode === "spent"
+              ? spent
+              : inspectMode === "shelfNow"
+                ? shelf.current
+                : displayedLowest
+          }
+          games={inspectGames}
+          money={money}
+          artwork={artwork}
+          sort={inspectSort}
+          onSort={setInspectSort}
+          onClose={() => setInspectMode(null)}
+          calibrating={lowsCalibrating}
+        />
+      ) : null}
+
+      <div className="value-after-telemetry">
+        {latestProgress ? (
+          <LowsLatestBar
+            latest={latestProgress.latest}
+            total={latestProgress.total}
+          />
+        ) : null}
+
+        <section className="spend-section cph-section">
+          <div className="spend-section-head">
+            <div>
+              <h3>Spend vs playtime</h3>
+              <p>
+                Cost per hour on library titles with a paid amount.
+              </p>
+            </div>
           </div>
-        </div>
 
         <div className="cph-summary">
           <div className="cph-blended">
@@ -830,40 +1562,7 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
           </Button>
         ) : null}
       </section>
-
-      <section className="spend-section">
-        <div className="spend-section-head">
-          <div>
-            <h3>Cost basis vs shelf</h3>
-            <p>Steam cards with paid / now / lowest from transaction line items.</p>
-          </div>
-          <ToggleGroup
-            value={[filter]}
-            onValueChange={(next) => {
-              const v = next[0] as "all" | "paid" | "unpaid" | undefined;
-              if (v) setFilter(v);
-            }}
-            variant="outline"
-            size="sm"
-            spacing={0}
-            aria-label="Filter deals"
-          >
-            <ToggleGroupItem value="all">All</ToggleGroupItem>
-            <ToggleGroupItem value="paid">Purchased</ToggleGroupItem>
-            <ToggleGroupItem value="unpaid">Free / gifted</ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-        <div className="deal-grid">
-          {dealGames.map((g) => (
-            <DealCard
-              key={`${g.title}-${g.isGift ? "g" : "l"}`}
-              game={g}
-              money={money}
-              artwork={artwork}
-            />
-          ))}
-        </div>
-      </section>
+      </div>
 
       <div className="two-col signal-grid spend-secondary">
         <section className="spend-section panel-glass">
@@ -906,14 +1605,131 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
         />
       ) : null}
 
+      <section className="spend-section gifts-received-section">
+        <div className="spend-section-head">
+          <div>
+            <h3>Gifts I received</h3>
+            <p>
+              Shows gifts Steam still lists, plus Gmail sync for older ones —
+              including who sent each gift when known.
+            </p>
+          </div>
+          <div className="gifts-received-side">
+            {hasReceivedGifts ? (
+              <span className="gifts-received-total mono cyan">
+                {money(valuation.giftsReceived?.current ?? 0)}
+              </span>
+            ) : null}
+            <div className="gifts-received-sync">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={mailSyncing}
+                onClick={() => void syncGmail()}
+              >
+                <RefreshCwIcon
+                  data-icon="inline-start"
+                  className={mailSyncing ? "animate-spin" : undefined}
+                />
+                {mailSyncing ? "Syncing…" : "Sync from Gmail"}
+              </Button>
+              {mailSyncing && mailSyncStatus ? (
+                <span className="gifts-received-meta" aria-live="polite">
+                  {mailSyncStatus.replace(/\s*—\s*closing window\.?$/i, "")}
+                </span>
+              ) : mailSyncError ? (
+                <span className="gifts-received-meta gifts-received-meta-error">
+                  {mailSyncError}
+                </span>
+              ) : mailSyncStatus ? (
+                <span className="gifts-received-meta" aria-live="polite">
+                  {mailSyncStatus}
+                </span>
+              ) : meta.mailGiftsLastSyncedAt ? (
+                <span
+                  className="gifts-received-meta"
+                  title={new Date(meta.mailGiftsLastSyncedAt).toLocaleString()}
+                >
+                  Synced{" "}
+                  {new Date(meta.mailGiftsLastSyncedAt).toLocaleDateString(
+                    undefined,
+                    {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    },
+                  )}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        {hasReceivedGifts ? (
+          <div className="purchase-rail">
+            {receivedGames.map((g) => (
+              <div key={g.title} className="purchase-chip-card">
+                <SteamThumb
+                  appId={g.steamAppId}
+                  name={g.title}
+                  artwork={artwork}
+                />
+                <div>
+                  <strong>{g.title}</strong>
+                  <small>
+                    {g.giftedFrom
+                      ? `From ${g.giftedFrom}`
+                      : g.acquisitionNote ?? "Gifted to me"}
+                  </small>
+                </div>
+                <span className="mono cyan">
+                  {g.current != null && g.current > 0
+                    ? money(g.current)
+                    : g.lowest != null && g.lowest > 0
+                      ? money(g.lowest)
+                      : "—"}
+                </span>
+              </div>
+            ))}
+            {mailGifts
+              .filter(
+                (m) =>
+                  !receivedGames.some((g) => giftTitlesMatch(g.title, m.title)),
+              )
+              .map((m) => (
+                <div key={`mail-${m.title}-${m.importedAt}`} className="purchase-chip-card">
+                  <SteamThumb appId={null} name={m.title} artwork={artwork} />
+                  <div>
+                    <strong>{m.title}</strong>
+                    <small>
+                      {m.fromPersona
+                        ? `From ${m.fromPersona}`
+                        : "Imported from Gmail"}
+                      {m.receivedAt
+                        ? ` · ${new Date(m.receivedAt).toLocaleDateString()}`
+                        : ""}
+                    </small>
+                  </div>
+                  <span className="mono cyan">—</span>
+                </div>
+              ))}
+          </div>
+        ) : (
+          <p className="gifts-received-empty">
+            No gifts yet. Use <strong>Sync from Gmail</strong> to pull Steam
+            gift emails.
+          </p>
+        )}
+      </section>
+
       {giftsSent.spent > 0 || (valuation.giftsSentGames?.length ?? 0) > 0 ? (
         <section className="spend-section gifts-sent-section">
           <div className="spend-section-head">
             <div>
               <h3>Gifts I sent</h3>
               <p>
-                Wallet outflow for games bought for others — not part of your
-                library value.
+                Games you bought for others — shows who received each gift when
+                Steam listed them.
               </p>
             </div>
             <span className="gifts-sent-total mono amber">
@@ -923,10 +1739,16 @@ export function SpendingValue({ data }: { data: DashboardPayload }) {
           <div className="purchase-rail">
             {(valuation.giftsSentGames ?? []).map((g) => (
               <div key={g.title} className="purchase-chip-card">
-                <SteamThumb appId={g.steamAppId} name={g.title} artwork={artwork} />
+                <SteamThumb
+                  appId={g.steamAppId}
+                  name={g.title}
+                  artwork={artwork}
+                />
                 <div>
                   <strong>{g.title}</strong>
-                  <small>Gifted away</small>
+                  <small>
+                    {g.giftedTo ? `To ${g.giftedTo}` : "Gifted away"}
+                  </small>
                 </div>
                 <span className="mono amber">
                   {g.paid != null ? money(g.paid) : "—"}

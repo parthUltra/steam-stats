@@ -36,6 +36,9 @@ yarn-error.log*
 
 # Steam session cookies (never commit)
 .steam-session/
+.gmail-session/
+.itad-session/
+.price-refresh/
 
 # Raw Account Data / parsed fixtures (PII)
 samples/**

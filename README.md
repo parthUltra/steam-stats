@@ -54,7 +54,7 @@ git clone https://github.com/parthUltra/steam-stats.git
 cd steam-stats
 npm install
 npx playwright install chromium
-cp .env.example .env.local   # optional: set STEAM_API_KEY
+cp .env.example .env.local   # optional: STEAM_API_KEY, ISTHEREANYDEAL_API_KEY
 ```
 
 ### Fetch & parse data
@@ -65,12 +65,15 @@ npm run parse:account-data
 npm run fetch:owned-games
 ```
 
-### Optional: transactions & prices
+### Optional: transactions, prices & older gifts
 
 ```bash
 npm run fetch:transactions
 npm run refresh:prices
+npm run sync:gifts-gmail     # opens Gmail in a browser; stores gift emails locally
 ```
+
+On the **Value** tab, **Gifts I received** shows Steam Gift/Guest Pass licenses immediately. **Sync from Gmail** opens your browser, searches Steam “You’ve received a gift” emails (e.g. *Your friend X has given you GAME on Steam*), and stores them in `data/gifts-received.json` (title, sender persona, gift link, date). Gmail session files live under `.gmail-session/`.
 
 ### Run the app
 
@@ -92,7 +95,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `npm run parse:account-data` | Parse HTML → JSON |
 | `npm run fetch:owned-games` | Full library + family playtime |
 | `npm run fetch:transactions` | Transaction line-item prices |
-| `npm run refresh:prices` | Refresh `data/price-cache.json` |
+| `npm run refresh:prices` | Refresh `data/price-cache.json` (Steam live + ITAD INR / CheapShark USD lows) |
 | `npm run lint` | ESLint |
 
 
@@ -103,6 +106,7 @@ Copy `.env.example` → `.env.local`:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `STEAM_API_KEY` | No | [Steam Web API key](https://steamcommunity.com/dev/apikey). Improves some library endpoints; session-based fetch already covers most playtime. |
+| `ISTHEREANYDEAL_API_KEY` | No | Prefer **Value → Get India lows** (paste key from [ITAD Apps](https://isthereanydeal.com/apps/)). Stored in `data/itad-credentials.json`. |
 
 ## Privacy & security
 

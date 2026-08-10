@@ -86,10 +86,15 @@ async function savePage(page: Page, id: string, url: string) {
   });
   await page.waitForTimeout(1500);
 
+  // Licenses table is server-rendered but can be huge — wait, scroll, stabilize.
+  if (id === "licenses") {
+    await settleLicensesTable(page);
+  }
+
   // Expand paginated Account Data / wallet history tables when present
   for (let i = 0; i < 40; i++) {
     const loadMore = page.locator(
-      ".AccountDataLoadMore:visible, #load_more_button:visible",
+      ".AccountDataLoadMore:visible, #load_more_button:visible, a.Link:has-text('Load more'):visible, button:has-text('Show more'):visible",
     );
     if ((await loadMore.count()) === 0) break;
     const first = loadMore.first();
@@ -101,6 +106,10 @@ async function savePage(page: Page, id: string, url: string) {
     } catch {
       break;
     }
+  }
+
+  if (id === "licenses") {
+    await settleLicensesTable(page);
   }
 
   const html = await page.content();
@@ -123,7 +132,41 @@ async function savePage(page: Page, id: string, url: string) {
     "utf8",
   );
   console.log(`  → ${outPath} (${meta.bytes} bytes, HTTP ${status})`);
+  if (id === "licenses") {
+    const rows = await page.locator("table.account_table tr").count();
+    console.log(`  → licenses table rows ≈ ${Math.max(0, rows - 1)} (excl. header)`);
+  }
   return meta;
+}
+
+/** Scroll + wait until the licenses account_table stops growing. */
+async function settleLicensesTable(page: Page) {
+  try {
+    await page.waitForSelector("table.account_table", { timeout: 30_000 });
+  } catch {
+    console.warn("  licenses: account_table not found yet");
+  }
+
+  let last = 0;
+  for (let i = 0; i < 25; i++) {
+    await page.evaluate(async () => {
+      const table = document.querySelector("table.account_table");
+      table?.scrollIntoView({ block: "end" });
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+    await page.waitForTimeout(800);
+    const n = await page.locator("table.account_table tr").count();
+    if (n > 0 && n === last) break;
+    last = n;
+  }
+
+  // One more beat for late paint
+  try {
+    await page.waitForLoadState("networkidle", { timeout: 8_000 });
+  } catch {
+    // ignore — Steam keeps sockets open
+  }
+  await page.waitForTimeout(1000);
 }
 
 async function main() {

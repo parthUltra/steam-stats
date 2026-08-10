@@ -7,8 +7,11 @@ export default async function Home() {
   let initialData = null;
   let initialError: string | null = null;
   try {
-    // Cache-only first paint; client /api/dashboard tops up stale quotes.
-    initialData = await buildDashboard({ refreshPrices: false, priceLimit: 0 });
+    // Cache-only first paint; weekly India lows refresh runs in the background if stale.
+    initialData = await buildDashboard({
+      refreshPrices: false,
+      priceLimit: 0,
+    });
   } catch (err) {
     initialError = err instanceof Error ? err.message : "Failed to load";
   }

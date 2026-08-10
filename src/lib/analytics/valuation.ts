@@ -1,22 +1,21 @@
 import type { LicenseRow, PurchaseHistoryRow } from "@/lib/account-data";
 import {
+  classifyAcquisition,
+  normTitle,
+  titlesSoftMatch,
+  type AcquisitionKind,
+} from "@/lib/analytics/acquisition";
+import {
   isGiftPurchase,
-  isGiftReceivedLicense,
-  isOwnedLibraryLicense,
   isTrackableGamePurchase,
   libraryTitlesForValuation,
   moneyOf,
   type SpendingAnalytics,
 } from "@/lib/analytics/spending";
-import { foldEditionPacksIntoBase } from "@/lib/analytics/edition-packs";
+import { foldEditionPacksIntoBase, clearBundleShelfPrices, isRedundantPackSku } from "@/lib/analytics/edition-packs";
 import type { GamePriceQuote, PriceCache } from "@/lib/pricing/prices";
 
-/** How this title relates to your wallet / shelf. */
-export type AcquisitionKind =
-  | "purchased"
-  | "gifted_to_me"
-  | "free"
-  | "gifted_by_me";
+export type { AcquisitionKind } from "@/lib/analytics/acquisition";
 
 export type ValuationGame = {
   title: string;
@@ -29,8 +28,14 @@ export type ValuationGame = {
   kind: AcquisitionKind;
   /** @deprecated use kind === "gifted_by_me" */
   isGift: boolean;
-  /** Gifted to you or permanent free — counts in shelf, not spent */
+  /** Unpaid shelf: gift / free / ownership grant / unclear unpaid */
   isUnpaidShelf: boolean;
+  /** Short provenance when known (bundle name, license note, …) */
+  acquisitionNote?: string;
+  /** Steam persona who gifted this to you */
+  giftedFrom?: string;
+  /** Steam persona you gifted this to */
+  giftedTo?: string;
 };
 
 export type ValueSlice = {
@@ -53,12 +58,26 @@ export type LibraryValuation = {
   shelfFull: ValueSlice;
   /** Paid purchases only now/lowest */
   shelfPaidOnly: ValueSlice;
+  /** Full shelf excluding mail-imported gifts received */
+  shelfExcludingReceivedGifts: ValueSlice;
   /** Free + gifted-to-you contribution to shelf */
   unpaidShelf: ValueSlice;
   /** Money you spent buying gifts for others (not in library) */
   giftsSent: ValueSlice;
+  /** Shelf value of games gifted to you (Gift/Guest Pass only) */
+  giftsReceived: ValueSlice;
   games: ValuationGame[];
   giftsSentGames: ValuationGame[];
+  /** Confirmed Gift/Guest Pass licenses only */
+  giftsReceivedGames: ValuationGame[];
+  /** Free / complimentary / F2P */
+  freeGames: ValuationGame[];
+  /** Included via a paid collection / bundle checkout */
+  bundleGames: ValuationGame[];
+  /** Remaster / upgrade likely granted for owning a base */
+  ownershipGrantGames: ValuationGame[];
+  /** Owned unpaid — origin unclear (not labeled as gifts) */
+  unknownUnpaidGames: ValuationGame[];
   unresolvedTitles: string[];
   note: string;
   valveTotalSpend: number | null;
@@ -82,11 +101,24 @@ export type LibraryValuation = {
 };
 
 function norm(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/™|®/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normTitle(title);
+}
+
+function isUnpaidKind(kind: AcquisitionKind) {
+  return (
+    kind === "gifted_to_me" ||
+    kind === "free" ||
+    kind === "ownership_grant" ||
+    kind === "unknown_unpaid"
+  );
+}
+
+function sortByShelfValue(games: ValuationGame[]) {
+  return [...games].sort(
+    (a, b) =>
+      (effectiveShelfNow(b) ?? 0) - (effectiveShelfNow(a) ?? 0) ||
+      a.title.localeCompare(b.title),
+  );
 }
 
 function isGiftCardName(name: string) {
@@ -219,39 +251,37 @@ function quoteCurrentInCurrency(
   return raw;
 }
 
-/** True all-time low must be meaningfully below the live USD price. */
-function isGenuineHistLow(
-  lowestUsd: number | null | undefined,
-  currentUsd: number | null | undefined,
-): lowestUsd is number {
-  if (lowestUsd == null || lowestUsd <= 0) return false;
-  if (currentUsd == null || currentUsd <= 0) return true;
-  return lowestUsd < currentUsd * 0.98;
-}
-
 function quoteLowestInCurrency(
   quote: GamePriceQuote,
   currency: string,
   currentLocal: number | null,
-  usdRate: number | null,
+  _usdRate: number | null,
 ): number | null {
-  const lowestUsd = quote.lowestUsd;
-  const currentUsd =
-    quote.currentUsd != null && quote.currentUsd > 0 ? quote.currentUsd : null;
+  // Only IsThereAnyDeal Steam India all-time low — never CheapShark / FX.
+  if (quote.lowestInr == null || quote.lowestInr <= 0) return null;
 
-  if (!isGenuineHistLow(lowestUsd, currentUsd)) {
-    return null;
+  const currentInr =
+    quote.currentInr != null && quote.currentInr > 0
+      ? quote.currentInr
+      : currency === "INR"
+        ? currentLocal
+        : null;
+
+  // Cap at live India price when we have it
+  if (currentInr != null && quote.lowestInr > currentInr) {
+    return currentInr;
   }
 
-  if (currency === "USD") {
-    return lowestUsd;
-  }
+  if (currency === "INR") return quote.lowestInr;
 
-  // Scale USD hist-low by live INR/USD when we have both legs
-  if (currentLocal != null && currentUsd != null && currentUsd > 0) {
-    return currentLocal * (lowestUsd / currentUsd);
+  // Non-INR display: scale from INR via live quote when possible
+  if (
+    currentLocal != null &&
+    currentInr != null &&
+    currentInr > 0
+  ) {
+    return currentLocal * (quote.lowestInr / currentInr);
   }
-  if (usdRate != null) return lowestUsd * usdRate;
   return null;
 }
 
@@ -265,6 +295,33 @@ export function effectiveShelfNow(game: {
   return null;
 }
 
+/**
+ * Stored India hist-low for shelf “lowest” totals (ITAD Steam IN).
+ * Free titles are ₹0. No fallback to live price — missing lows stay out
+ * of the total until they’re stored (UI may hybridize while calibrating).
+ */
+export function effectiveShelfLowest(game: {
+  current: number | null;
+  lowest: number | null;
+  kind?: string;
+}): number | null {
+  if (game.kind === "free") return 0;
+  if (game.lowest != null && game.lowest > 0) return game.lowest;
+  return null;
+}
+
+/** While lows are still filling: hist low if known, else live shelf price. */
+export function effectiveShelfLowestBestKnown(game: {
+  current: number | null;
+  lowest: number | null;
+  kind?: string;
+}): number | null {
+  if (game.kind === "free") return 0;
+  if (game.lowest != null && game.lowest > 0) return game.lowest;
+  if (game.current != null && game.current > 0) return game.current;
+  return null;
+}
+
 function findQuote(
   priceCache: PriceCache,
   title: string,
@@ -275,18 +332,19 @@ function findQuote(
     return exact;
   }
 
-  // Punctuation-tolerant match ("Brotato - DLC" ↔ "Brotato: DLC") without
-  // grabbing a shorter base-game quote via substring includes.
+  // Punctuation-tolerant match ("Unrailed" ↔ "Unrailed!", "Brotato - DLC" ↔ "Brotato: DLC")
+  // without grabbing a shorter base-game quote via substring includes.
   const loose = (t: string) =>
     norm(t)
-      .replace(/[-–—:]/g, " ")
+      .replace(/[-–—:!?.]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
   const looseKey = loose(title);
-
-  for (const [k, q] of Object.entries(priceCache.quotes)) {
-    if (q.steamAppId == null || q.source === "unresolved") continue;
-    if (loose(k) === looseKey || loose(q.title) === looseKey) return q;
+  if (looseKey.length >= 2) {
+    for (const [k, q] of Object.entries(priceCache.quotes)) {
+      if (q.steamAppId == null || q.source === "unresolved") continue;
+      if (loose(k) === looseKey || loose(q.title) === looseKey) return q;
+    }
   }
 
   // Keep an exact unresolved row so the title stays visible for gift/DLC fold
@@ -300,20 +358,31 @@ function giftSentTitles(purchases: PurchaseHistoryRow[]): string[] {
     const names = row.lineItems?.map((l) => l.name) ?? row.items ?? [];
     for (const name of names) {
       if (!name || isGiftCardName(name)) continue;
+      if (/^gift sent to\b/i.test(name)) continue;
       titles.add(name);
     }
   }
   return [...titles];
 }
 
-function giftReceivedTitles(licenses: LicenseRow[]): Set<string> {
-  const set = new Set<string>();
-  for (const lic of licenses) {
-    if (!isGiftReceivedLicense(lic)) continue;
-    const t = lic.item.trim();
-    if (t) set.add(norm(t));
+/** Norm title → Steam persona you gifted to (last wins if duplicates). */
+function giftSentRecipients(
+  purchases: PurchaseHistoryRow[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of purchases) {
+    if (!isGiftPurchase(row) || row.refunded) continue;
+    const to = row.giftRecipient?.trim();
+    if (!to) continue;
+    const names = row.lineItems?.map((l) => l.name) ?? row.items ?? [];
+    for (const name of names) {
+      if (!name || isGiftCardName(name) || /^gift sent to\b/i.test(name)) {
+        continue;
+      }
+      map.set(norm(name), to);
+    }
   }
-  return set;
+  return map;
 }
 
 function sumShelf(
@@ -328,17 +397,44 @@ function sumShelf(
 
   for (const g of games) {
     if (!pred(g)) continue;
+    // Multi-game collection/bundle SKUs that already cover sibling games
+    if (isRedundantPackSku(g, games)) {
+      titlesConsidered += 1;
+      if (g.paid != null) spent += g.paid;
+      continue;
+    }
     titlesConsidered += 1;
     if (g.paid != null) spent += g.paid;
     if (!g.resolved) continue;
     titlesResolved += 1;
     const now = effectiveShelfNow(g);
     if (now != null) current += now;
-    // Only sum genuine hist lows — never pad with "now" (that inflated Low ≈ shelf)
-    if (g.lowest != null && g.lowest > 0) lowest += g.lowest;
+    const low = effectiveShelfLowest(g);
+    if (low != null) lowest += low;
   }
 
   return { spent, current, lowest, titlesResolved, titlesConsidered };
+}
+
+/**
+ * Remasters sometimes lack an ITAD Steam store-low while the original SKU has
+ * one (BioShock Remastered vs BioShock). Use the best related India low.
+ */
+function relatedEditionIndiaLow(
+  priceCache: PriceCache,
+  title: string,
+  selfKey: string,
+): number | null {
+  let best: number | null = null;
+  for (const [k, q] of Object.entries(priceCache.quotes)) {
+    if (k === selfKey) continue;
+    if (q.lowestInr == null || q.lowestInr <= 0) continue;
+    if (!titlesSoftMatch(title, q.title) && !titlesSoftMatch(title, k)) {
+      continue;
+    }
+    best = best == null ? q.lowestInr : Math.min(best, q.lowestInr);
+  }
+  return best;
 }
 
 function priceGame(
@@ -349,10 +445,14 @@ function priceGame(
   currency: string,
   usdRate: number | null,
   unresolvedTitles: string[],
+  acquisitionNote?: string,
+  giftPeople?: { giftedFrom?: string; giftedTo?: string },
 ): ValuationGame {
   const quote = findQuote(priceCache, title);
   const isGift = kind === "gifted_by_me";
-  const isUnpaidShelf = kind === "gifted_to_me" || kind === "free";
+  const isUnpaidShelf = isUnpaidKind(kind);
+  const giftedFrom = giftPeople?.giftedFrom;
+  const giftedTo = giftPeople?.giftedTo;
 
   if (!quote || quote.source === "unresolved" || quote.steamAppId == null) {
     unresolvedTitles.push(quote?.title ?? title);
@@ -360,30 +460,58 @@ function priceGame(
       title: quote?.title ?? title,
       paid,
       current: null,
-      lowest: null,
+      lowest: kind === "free" ? 0 : null,
       steamAppId: null,
       onSale: false,
-      resolved: false,
+      resolved: kind === "free",
       kind,
       isGift,
       isUnpaidShelf,
+      acquisitionNote,
+      giftedFrom,
+      giftedTo,
     };
   }
 
   const current = quoteCurrentInCurrency(quote, currency, usdRate);
-  let lowest = quoteLowestInCurrency(quote, currency, current, usdRate);
-  if (lowest != null && lowest <= 0) lowest = null;
-
-  // CheapShark often has no all-time low (or cache still has currentUsd copied
-  // in). For purchased titles, your paid price is a real floor for "best known".
-  if (
-    lowest == null &&
-    kind === "purchased" &&
-    paid != null &&
-    paid > 0
-  ) {
-    lowest = current != null && current > 0 ? Math.min(paid, current) : paid;
+  // Free-to-keep titles: lowest is ₹0 (not market/live price)
+  if (kind === "free") {
+    return {
+      title: quote.title || title,
+      paid,
+      current,
+      lowest: 0,
+      steamAppId: quote.steamAppId,
+      onSale: quote.onSale,
+      resolved: true,
+      kind,
+      isGift,
+      isUnpaidShelf,
+      acquisitionNote,
+      giftedFrom,
+      giftedTo,
+    };
   }
+
+  let lowest = quoteLowestInCurrency(quote, currency, current, usdRate);
+  if (lowest == null) {
+    const related = relatedEditionIndiaLow(
+      priceCache,
+      quote.title || title,
+      normalizeQuoteKey(quote.title || title),
+    );
+    if (related != null) {
+      lowest =
+        currency === "INR"
+          ? related
+          : current != null &&
+              quote.currentInr != null &&
+              quote.currentInr > 0
+            ? current * (related / quote.currentInr)
+            : null;
+    }
+  }
+  if (lowest != null && lowest <= 0) lowest = null;
 
   // Cap at live price — hist low cannot exceed shelf now
   if (lowest != null && current != null && lowest > current) {
@@ -391,7 +519,7 @@ function priceGame(
   }
 
   return {
-    title: quote.title,
+    title: quote.title || title,
     paid,
     current,
     lowest,
@@ -401,13 +529,22 @@ function priceGame(
     kind,
     isGift,
     isUnpaidShelf,
+    acquisitionNote,
+    giftedFrom,
+    giftedTo,
   };
 }
 
+function normalizeQuoteKey(title: string) {
+  return norm(title);
+}
+
 function acquisitionPriority(kind: AcquisitionKind): number {
-  if (kind === "purchased") return 3;
-  if (kind === "gifted_to_me") return 2;
+  if (kind === "purchased" || kind === "bundle") return 4;
+  if (kind === "gifted_to_me") return 3;
+  if (kind === "ownership_grant") return 2;
   if (kind === "free") return 1;
+  if (kind === "unknown_unpaid") return 1;
   return 0;
 }
 
@@ -416,6 +553,41 @@ function dedupeLibraryGames(games: ValuationGame[]): ValuationGame[] {
   const byApp = new Map<number, ValuationGame>();
   const unresolved: ValuationGame[] = [];
   const unresolvedSeen = new Set<string>();
+
+  const mergeRows = (keep: ValuationGame, drop: ValuationGame): ValuationGame => {
+    const preferTitle =
+      /[!?]$/.test(keep.title) || keep.title.length >= drop.title.length
+        ? keep.title
+        : /[!?]$/.test(drop.title) || drop.title.length > keep.title.length
+          ? drop.title
+          : keep.title;
+    return {
+      ...keep,
+      title: preferTitle,
+      paid:
+        keep.kind === "purchased" || drop.kind === "purchased"
+          ? Math.max(keep.paid ?? 0, drop.paid ?? 0) || keep.paid || drop.paid
+          : keep.paid ?? drop.paid,
+      current:
+        keep.current != null && keep.current > 0
+          ? keep.current
+          : drop.current != null && drop.current > 0
+            ? drop.current
+            : keep.current ?? drop.current,
+      lowest:
+        keep.lowest != null && keep.lowest > 0
+          ? keep.lowest
+          : drop.lowest != null && drop.lowest > 0
+            ? drop.lowest
+            : keep.lowest ?? drop.lowest,
+      steamAppId: keep.steamAppId ?? drop.steamAppId,
+      onSale: keep.onSale || drop.onSale,
+      resolved: keep.resolved || drop.resolved,
+      acquisitionNote: keep.acquisitionNote ?? drop.acquisitionNote,
+      giftedFrom: keep.giftedFrom ?? drop.giftedFrom,
+      giftedTo: keep.giftedTo ?? drop.giftedTo,
+    };
+  };
 
   for (const g of games) {
     if (g.steamAppId == null) {
@@ -436,19 +608,24 @@ function dedupeLibraryGames(games: ValuationGame[]): ValuationGame[] {
     const pPri = acquisitionPriority(prev.kind);
 
     if (gPri > pPri) {
-      byApp.set(g.steamAppId, {
-        ...g,
-        paid:
-          g.kind === "purchased"
-            ? Math.max(g.paid ?? 0, prev.kind === "purchased" ? prev.paid ?? 0 : 0)
-            : g.paid,
-      });
-    } else if (gPri === pPri && g.kind === "purchased") {
-      byApp.set(g.steamAppId, {
-        ...prev,
-        paid: Math.max(prev.paid ?? 0, g.paid ?? 0),
-        onSale: prev.onSale || g.onSale,
-      });
+      byApp.set(g.steamAppId, mergeRows(g, prev));
+    } else if (gPri < pPri) {
+      byApp.set(g.steamAppId, mergeRows(prev, g));
+    } else if (g.kind === "purchased") {
+      byApp.set(g.steamAppId, mergeRows(
+        { ...prev, paid: Math.max(prev.paid ?? 0, g.paid ?? 0) },
+        g,
+      ));
+    } else {
+      // Same priority — keep the priced / better-titled row
+      const keep =
+        (g.current != null && g.current > 0) ||
+        (g.lowest != null && g.lowest > 0) ||
+        g.resolved
+          ? g
+          : prev;
+      const drop = keep === g ? prev : g;
+      byApp.set(g.steamAppId, mergeRows(keep, drop));
     }
   }
 
@@ -470,16 +647,21 @@ function mergeIntoParent(parent: ValuationGame, dlc: ValuationGame): ValuationGa
       : parent.kind;
   // Prefer purchased if either paid money
   const effectiveKind =
-    (parent.kind === "purchased" || dlc.kind === "purchased") &&
+    (parent.kind === "purchased" ||
+      dlc.kind === "purchased" ||
+      parent.kind === "bundle" ||
+      dlc.kind === "bundle") &&
     paid != null &&
     paid > 0
-      ? "purchased"
+      ? parent.kind === "bundle" || dlc.kind === "bundle"
+        ? "bundle"
+        : "purchased"
       : kind;
 
   return {
     ...parent,
     title: parent.title,
-    steamAppId: parent.steamAppId,
+    steamAppId: parent.steamAppId ?? dlc.steamAppId,
     paid,
     current,
     lowest,
@@ -487,7 +669,8 @@ function mergeIntoParent(parent: ValuationGame, dlc: ValuationGame): ValuationGa
     resolved: parent.resolved || dlc.resolved,
     kind: effectiveKind,
     isGift: effectiveKind === "gifted_by_me",
-    isUnpaidShelf: effectiveKind === "gifted_to_me" || effectiveKind === "free",
+    isUnpaidShelf: isUnpaidKind(effectiveKind),
+    acquisitionNote: parent.acquisitionNote ?? dlc.acquisitionNote,
   };
 }
 
@@ -597,16 +780,34 @@ export function buildLibraryValuation(
   licenses: LicenseRow[],
   priceCache: PriceCache,
   spending: SpendingAnalytics,
-  opts?: { dlcParents?: Map<number, number> },
+  opts?: {
+    dlcParents?: Map<number, number>;
+    /** Owned / played titles (excl. family-only) to catch gifts missing from licenses scrape */
+    ownedTitles?: string[];
+    /** Titles imported from Steam gift emails */
+    mailGiftTitles?: string[];
+    /** Steam persona who sent each mail gift (norm title → name) */
+    mailGiftSenders?: Map<string, string>;
+  },
 ): LibraryValuation {
   const currency = spending.currency;
   const usdRate = currency === "USD" ? 1 : inferUsdToDisplayRate(priceCache);
 
   const libraryPaid = paidByTitle(purchases, { giftsOnly: false });
   const giftSentPaid = paidByTitle(purchases, { giftsOnly: true });
-  const libraryTitles = libraryTitlesForValuation(purchases, licenses);
-  const receivedKeys = giftReceivedTitles(licenses);
+  const giftToByTitle = giftSentRecipients(purchases);
+  const mailGiftTitles = opts?.mailGiftTitles ?? [];
+  const mailGiftSenders = opts?.mailGiftSenders;
+  const libraryTitles = [
+    ...new Set([
+      ...libraryTitlesForValuation(purchases, licenses),
+      ...(opts?.ownedTitles ?? []),
+      ...mailGiftTitles,
+    ]),
+  ];
   const sentTitles = giftSentTitles(purchases);
+  const ownedKeys = new Set((opts?.ownedTitles ?? []).map(norm));
+  const libraryTitleKeys = libraryTitles.map(norm);
 
   const games: ValuationGame[] = [];
   const giftsSentGames: ValuationGame[] = [];
@@ -618,38 +819,52 @@ export function buildLibraryValuation(
     if (seenLib.has(key)) continue;
     seenLib.add(key);
 
-    const paidAmount = libraryPaid.get(key) ?? null;
-    let kind: AcquisitionKind;
-    let paid: number | null;
+    const quote = findQuote(priceCache, title);
+    const priceHint = quote
+      ? {
+          current:
+            currency === "USD"
+              ? quote.currentUsd
+              : (quote.currentInr ?? quote.currentUsd),
+          retail:
+            currency === "USD"
+              ? quote.retailUsd
+              : (quote.retailInr ?? quote.retailUsd),
+        }
+      : undefined;
 
-    if (receivedKeys.has(key) && !(paidAmount != null && paidAmount > 0)) {
-      kind = "gifted_to_me";
-      paid = 0;
-    } else if (paidAmount != null && paidAmount > 0) {
-      kind = "purchased";
-      paid = paidAmount;
-    } else if (receivedKeys.has(key)) {
-      kind = "gifted_to_me";
-      paid = 0;
-    } else if (
-      licenses.some(
-        (l) => isOwnedLibraryLicense(l) && norm(l.item) === key,
-      ) &&
-      !(paidAmount != null && paidAmount > 0)
-    ) {
-      // Owned via license with no purchase line — free / complimentary kept
-      const lic = licenses.find(
-        (l) => isOwnedLibraryLicense(l) && norm(l.item) === key,
-      );
-      kind = lic && isGiftReceivedLicense(lic) ? "gifted_to_me" : "free";
-      paid = 0;
-    } else {
-      kind = "purchased";
-      paid = paidAmount;
-    }
+    const classified = classifyAcquisition({
+      title,
+      licenses,
+      purchases,
+      paidByExact: libraryPaid,
+      ownedKeys,
+      libraryTitleKeys,
+      mailGiftTitles,
+      mailGiftSenders,
+      priceHint,
+    });
+
+    const giftedFrom =
+      classified.kind === "gifted_to_me"
+        ? mailGiftSenders?.get(norm(title)) ||
+          [...(mailGiftSenders?.entries() ?? [])].find(
+            ([k]) => titlesSoftMatch(k, title),
+          )?.[1]
+        : undefined;
 
     games.push(
-      priceGame(title, paid, kind, priceCache, currency, usdRate, unresolvedTitles),
+      priceGame(
+        title,
+        classified.paid,
+        classified.kind,
+        priceCache,
+        currency,
+        usdRate,
+        unresolvedTitles,
+        classified.note,
+        giftedFrom ? { giftedFrom } : undefined,
+      ),
     );
   }
 
@@ -659,6 +874,9 @@ export function buildLibraryValuation(
     if (seenSent.has(key)) continue;
     seenSent.add(key);
     const paid = giftSentPaid.get(key) ?? null;
+    const giftedTo =
+      giftToByTitle.get(key) ||
+      [...giftToByTitle.entries()].find(([k]) => titlesSoftMatch(k, title))?.[1];
     giftsSentGames.push(
       priceGame(
         title,
@@ -668,24 +886,31 @@ export function buildLibraryValuation(
         currency,
         usdRate,
         unresolvedTitles,
+        giftedTo ? `Gifted to ${giftedTo}` : undefined,
+        giftedTo ? { giftedTo } : undefined,
       ),
     );
   }
 
-  const merged = foldEditionPacksIntoBase(
-    foldDlcIntoParents(dedupeLibraryGames(games), opts?.dlcParents ?? new Map()),
+  const merged = clearBundleShelfPrices(
+    foldEditionPacksIntoBase(
+      foldDlcIntoParents(dedupeLibraryGames(games), opts?.dlcParents ?? new Map()),
+    ),
   );
   merged.sort((a, b) => (b.paid ?? 0) - (a.paid ?? 0));
-  const giftsMerged = foldEditionPacksIntoBase(
-    foldDlcIntoParents(
-      dedupeLibraryGames(giftsSentGames),
-      opts?.dlcParents ?? new Map(),
+  const giftsMerged = clearBundleShelfPrices(
+    foldEditionPacksIntoBase(
+      foldDlcIntoParents(
+        dedupeLibraryGames(giftsSentGames),
+        opts?.dlcParents ?? new Map(),
+      ),
     ),
   );
   giftsMerged.sort((a, b) => (b.paid ?? 0) - (a.paid ?? 0));
 
   const isLibrary = (g: ValuationGame) => g.kind !== "gifted_by_me";
-  const isPaidShelf = (g: ValuationGame) => g.kind === "purchased";
+  const isPaidShelf = (g: ValuationGame) =>
+    g.kind === "purchased" || g.kind === "bundle";
   const isUnpaid = (g: ValuationGame) => g.isUnpaidShelf;
 
   const shelfFull = sumShelf(merged, isLibrary);
@@ -694,11 +919,34 @@ export function buildLibraryValuation(
   const shelfPaidOnly = sumShelf(merged, isPaidShelf);
   shelfPaidOnly.spent = spending.netSpent;
 
+  const shelfExcludingReceivedGifts = sumShelf(
+    merged,
+    (g) => isLibrary(g) && g.kind !== "gifted_to_me",
+  );
+  shelfExcludingReceivedGifts.spent = spending.netSpent;
+
   const unpaidShelf = sumShelf(merged, isUnpaid);
   unpaidShelf.spent = 0;
 
   const giftsSent = sumShelf(giftsMerged, () => true);
   giftsSent.spent = spending.giftSpend;
+
+  const giftsReceivedGames = sortByShelfValue(
+    merged.filter((g) => g.kind === "gifted_to_me"),
+  );
+  const freeGames = sortByShelfValue(merged.filter((g) => g.kind === "free"));
+  const bundleGames = sortByShelfValue(
+    merged.filter((g) => g.kind === "bundle"),
+  );
+  const ownershipGrantGames = sortByShelfValue(
+    merged.filter((g) => g.kind === "ownership_grant"),
+  );
+  const unknownUnpaidGames = sortByShelfValue(
+    merged.filter((g) => g.kind === "unknown_unpaid"),
+  );
+
+  const giftsReceived = sumShelf(giftsReceivedGames, () => true);
+  giftsReceived.spent = 0;
 
   const toDisplay = (usd: number | null | undefined) => {
     if (usd == null) return null;
@@ -708,9 +956,7 @@ export function buildLibraryValuation(
   };
 
   const note =
-    usdRate != null && currency !== "USD"
-      ? `Spent is what you paid for your library. Cost basis vs shelf counts one copy per title (extra copies in a multi-buy don’t stack). DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Hist. low prefers CheapShark all-time USD lows (scaled ~${usdRate.toFixed(2)} ${currency}/USD); when unknown, uses what you paid (capped at live). Gifts you sent are separate.`
-      : "Spent is what you paid for your library. Cost basis vs shelf counts one copy per title (extra copies in a multi-buy don’t stack). DLC and edition packs (Complete/GOTY/etc.) roll into the base game when both are owned. Now/lowest default to your full kept shelf (incl. free & gifted-to-you). Hist. low prefers CheapShark all-time lows; when unknown, uses what you paid (capped at live). Gifts you sent are separate.";
+    "Spent is what you paid for your library. Shelf now values playable games only (not collections/bundles). Remasters and alternate editions fold into one row (remaster preferred — originals are not double-counted). Bundles attribute cost to included titles when the checkout lists the pack. Gifts received come from Steam Gift/Guest Pass and/or Gmail sync. DLC rolls into the base when both are owned. Lowest is only the Steam India all-time low via IsThereAnyDeal, refreshed at most weekly and stored locally. Free titles count as ₹0 for lowest. Gifts you sent are separate.";
 
   // Back-compat: excludingGifts ≈ full library shelf; includingGifts ignored for heroes
   const excludingGifts = shelfFull;
@@ -729,10 +975,17 @@ export function buildLibraryValuation(
     librarySpent: spending.netSpent,
     shelfFull,
     shelfPaidOnly,
+    shelfExcludingReceivedGifts,
     unpaidShelf,
     giftsSent,
+    giftsReceived,
     games: merged,
     giftsSentGames: giftsMerged,
+    giftsReceivedGames,
+    freeGames,
+    bundleGames,
+    ownershipGrantGames,
+    unknownUnpaidGames,
     unresolvedTitles,
     note,
     valveTotalSpend: toDisplay(spending.valveSpendUsd.totalSpend),

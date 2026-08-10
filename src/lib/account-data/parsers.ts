@@ -23,6 +23,8 @@ export type PurchaseHistoryRow = {
   paymentMethods: string[];
   /** True when this purchase was a gift sent to someone else */
   isGift: boolean;
+  /** Steam persona the gift was sent to (from “Gift sent to …”) */
+  giftRecipient?: string | null;
   price: Money | null;
   originalPrice: Money | null;
   discountedPrice: Money | null;
@@ -172,11 +174,26 @@ export function parsePurchaseHistory(html: string): PurchaseHistoryRow[] {
       .find("td.wht_items div")
       .map((__, el) => cleanText($(el).text()))
       .get()
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((name) => !/^gift sent to\b/i.test(name));
 
     const typeCell = cleanText($tr.find("td.wht_type").text());
+    const itemsHtml = $tr.find("td.wht_items").html() ?? "";
+    const itemsText = cleanText($tr.find("td.wht_items").text());
+    const recipientFromHtml = itemsHtml.match(
+      /Gift\s+sent\s+to\s*<a[^>]*>([^<]+)<\/a>/i,
+    )?.[1];
+    const recipientFromText = itemsText.match(
+      /Gift\s+sent\s+to\s+(.+)$/i,
+    )?.[1];
+    const giftRecipient = cleanText(
+      recipientFromHtml || recipientFromText || "",
+    ) || null;
+
     const isGift =
+      Boolean(giftRecipient) ||
       /gift sent to/i.test(typeCell) ||
+      /gift purchase/i.test(typeCell) ||
       $tr.find('img[src*="icon_gift"]').length > 0 ||
       items.some((i) => /gift sent to/i.test(i));
 
@@ -213,6 +230,7 @@ export function parsePurchaseHistory(html: string): PurchaseHistoryRow[] {
       lineItems: [],
       type: type || "Unknown",
       isGift,
+      giftRecipient,
       paymentMethods: paymentBlocks.length
         ? paymentBlocks
         : paymentFallback
@@ -271,6 +289,7 @@ export function applyTransactionLineItems(
       // Keep gift flag from history row; replace names with detail line items
       items: lineItems.map((l) => l.name),
       isGift: row.isGift,
+      giftRecipient: row.giftRecipient,
     };
   });
 }

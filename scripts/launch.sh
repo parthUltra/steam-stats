@@ -79,9 +79,9 @@ npm run fetch:owned-games
 
 if [[ "$SKIP_PRICES" != "1" ]]; then
   echo
-  bold "Step 4/4 — Market prices (optional, can take a few minutes)"
-  info "You can skip next time with STEAM_STATS_SKIP_PRICES=1"
-  npm run refresh:prices || info "Price refresh had issues — you can retry from the Value tab."
+  bold "Step 4/4 — Lows refresh"
+  info "Dashboard refreshes India lows at most once per week (stored in data/price-cache.json)."
+  info "Skip this notice with STEAM_STATS_SKIP_PRICES=1"
 else
   info "Skipping price refresh (STEAM_STATS_SKIP_PRICES=1)"
 fi

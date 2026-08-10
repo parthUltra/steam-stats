@@ -10,6 +10,7 @@ import {
   buildPlaytimeAnalytics,
   type PlayedGame,
 } from "@/lib/account-data";
+import { resolveItadApiKey } from "@/lib/pricing/itad-credentials";
 import { loadPriceCache, refreshPricesForTitles } from "@/lib/pricing/prices";
 import {
   fetchOwnedGamesFromSteamSession,
@@ -18,6 +19,8 @@ import {
 import { resolveArtworkForAppIds } from "@/lib/steam/artwork-resolve";
 import { resolveDlcParents } from "@/lib/steam/dlc-parents";
 import { resolveSteamAppId } from "@/lib/steam/resolve-app-id";
+import { loadReceivedGifts } from "@/lib/gifts/received-store";
+import { normTitle } from "@/lib/analytics/acquisition";
 
 function mergePlaytime(
   htmlGames: PlayedGame[],
@@ -132,6 +135,7 @@ export async function buildDashboard(options?: {
     bundle.licenses,
   );
   // Price kept library + gifts you sent (sent only for the separate gifts section art/quotes)
+  // + owned playtime titles (catches gifts / keys missing from truncated licenses)
   const giftSentTitles = bundle.purchases
     .filter((p) => p.isGift && !p.refunded)
     .flatMap((p) =>
@@ -139,11 +143,28 @@ export async function buildDashboard(options?: {
         (n) => n && !/gift card/i.test(n),
       ),
     );
-  const titles = [...new Set([...libraryTitles, ...giftSentTitles])];
+  const ownedPlayTitles = playedGames
+    .filter((g) => !g.fromFamily)
+    .map((g) => g.name);
+  const receivedStore = await loadReceivedGifts();
+  const mailGiftTitles = receivedStore.gifts.map((g) => g.title);
+  const mailGiftSenders = new Map<string, string>();
+  for (const g of receivedStore.gifts) {
+    if (!g.fromPersona) continue;
+    mailGiftSenders.set(normTitle(g.title), g.fromPersona);
+  }
+  const titles = [
+    ...new Set([
+      ...libraryTitles,
+      ...giftSentTitles,
+      ...ownedPlayTitles,
+      ...mailGiftTitles,
+    ]),
+  ];
   let priceCache = await loadPriceCache();
-  // priceLimit 0 = SSR fast path (cache only). Otherwise top up missing/stale
-  // quotes automatically (24h TTL unless force).
-  const priceLimit = options?.priceLimit ?? 60;
+  // priceLimit 0 = cache only (preferred). Non-zero tops up missing/stale
+  // quotes (7-day TTL unless force) — used by CLI refresh, not dashboard load.
+  const priceLimit = options?.priceLimit ?? 0;
   if (priceLimit > 0) {
     priceCache = await refreshPricesForTitles(titles, {
       force: Boolean(options?.refreshPrices),
@@ -174,7 +195,14 @@ export async function buildDashboard(options?: {
     bundle.licenses,
     priceCache,
     spending,
-    { dlcParents },
+    {
+      dlcParents,
+      ownedTitles: playedGames
+        .filter((g) => !g.fromFamily)
+        .map((g) => g.name),
+      mailGiftTitles,
+      mailGiftSenders,
+    },
   );
 
   const costPerHour = buildCostPerHourAnalytics(
@@ -205,6 +233,17 @@ export async function buildDashboard(options?: {
       g.steamAppId = resolveSteamAppId(g.title, idSources);
     }
   }
+  for (const g of [
+    ...valuation.giftsReceivedGames,
+    ...valuation.freeGames,
+    ...valuation.bundleGames,
+    ...valuation.ownershipGrantGames,
+    ...valuation.unknownUnpaidGames,
+  ]) {
+    if (g.steamAppId == null) {
+      g.steamAppId = resolveSteamAppId(g.title, idSources);
+    }
+  }
 
   const artworkAppIds = [
     ...playedGames.map((g) => g.appId),
@@ -212,6 +251,21 @@ export async function buildDashboard(options?: {
       .map((g) => g.steamAppId)
       .filter((id): id is number => id != null),
     ...valuation.giftsSentGames
+      .map((g) => g.steamAppId)
+      .filter((id): id is number => id != null),
+    ...valuation.giftsReceivedGames
+      .map((g) => g.steamAppId)
+      .filter((id): id is number => id != null),
+    ...valuation.freeGames
+      .map((g) => g.steamAppId)
+      .filter((id): id is number => id != null),
+    ...valuation.bundleGames
+      .map((g) => g.steamAppId)
+      .filter((id): id is number => id != null),
+    ...valuation.ownershipGrantGames
+      .map((g) => g.steamAppId)
+      .filter((id): id is number => id != null),
+    ...valuation.unknownUnpaidGames
       .map((g) => g.steamAppId)
       .filter((id): id is number => id != null),
     ...costPerHour.games
@@ -238,7 +292,19 @@ export async function buildDashboard(options?: {
       priceCacheUpdatedAt: priceCache.updatedAt || null,
       titlesForPricing: titles.length,
       hasSteamApiKey: Boolean(process.env.STEAM_API_KEY),
+      hasItadApiKey: Boolean(await resolveItadApiKey()),
       libraryGameCount: playedGames.length,
+      mailGiftsLastSyncedAt: receivedStore.lastMailSyncedAt ?? null,
+      mailGiftsCount: receivedStore.gifts.length,
+      mailGifts: receivedStore.gifts.map((g) => ({
+        title: g.title,
+        fromPersona: g.fromPersona ?? null,
+        receivedAt: g.receivedAt ?? null,
+        giftUrl: g.giftUrl ?? null,
+        subject: g.subject ?? null,
+        source: g.source,
+        importedAt: g.importedAt,
+      })),
     },
     playtime,
     spending,
