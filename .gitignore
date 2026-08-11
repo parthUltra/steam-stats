@@ -20,6 +20,17 @@
 # production
 /build
 
+# IDE / agent / design tooling (local only)
+.cursor/
+.impeccable/
+.vscode/
+.idea/
+.claude/
+DESIGN.md
+PRODUCT.md
+AGENTS.md
+CLAUDE.md
+
 # misc
 .DS_Store
 *.pem
