@@ -8,6 +8,7 @@ import {
   isGmailSyncRunning,
   readGmailSyncStatus,
 } from "@/lib/gifts/sync-gmail-playwright";
+import { rejectCrossOrigin } from "@/lib/http/same-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,9 @@ export async function GET() {
   });
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
+  const denied = rejectCrossOrigin(req);
+  if (denied) return denied;
   const store = await clearReceivedGifts();
   return NextResponse.json(store);
 }
@@ -32,7 +35,9 @@ export async function DELETE() {
  * Starts Gmail sync in a detached browser process and returns immediately.
  * Poll GET until sync.phase is done|error (or sync.running is false).
  */
-export async function POST() {
+export async function POST(req: Request) {
+  const denied = rejectCrossOrigin(req);
+  if (denied) return denied;
   try {
     const result = await startGmailSyncProcess();
     if (result.error && !result.started && !result.alreadyRunning) {

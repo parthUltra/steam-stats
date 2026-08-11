@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState, type Ref } from "react";
+import { useMemo, type Ref } from "react";
 import { SearchIcon } from "lucide-react";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
 import { PlaytimePanorama } from "@/components/PlaytimePanorama";
-import { SteamArt, expandedArtCandidates } from "@/components/SteamArt";
+import { SteamArt } from "@/components/SteamArt";
 import type { ArtworkUrls } from "@/lib/steam/artwork-resolve";
 import {
   formatPlayHours,
@@ -35,22 +35,9 @@ function GameCard({
   artwork?: Record<string, ArtworkUrls>;
   index?: number;
 }) {
-  const candidates = useMemo(
-    () => expandedArtCandidates(game.appId, "library", artwork),
-    [game.appId, artwork],
-  );
-  const candidateKey = candidates.join("\0");
-  const [srcIdx, setSrcIdx] = useState(0);
-  const [seenKey, setSeenKey] = useState(candidateKey);
-  if (seenKey !== candidateKey) {
-    setSeenKey(candidateKey);
-    setSrcIdx(0);
-  }
-  const imgFailed = srcIdx >= candidates.length;
   const pct =
     maxHours > 0 ? Math.min(100, (game.hoursForever / maxHours) * 100) : 0;
   const showRank = rank != null && rank > 0;
-  const initial = game.name.trim().slice(0, 1).toUpperCase() || "?";
 
   return (
     <a
@@ -61,22 +48,15 @@ function GameCard({
       style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
     >
       <div className="game-card-art">
-        {!imgFailed ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            key={candidates[srcIdx]}
-            src={candidates[srcIdx]}
-            alt=""
-            loading="lazy"
-            referrerPolicy="no-referrer"
-            onError={() => setSrcIdx((i) => i + 1)}
-          />
-        ) : (
-          <div className="game-card-fallback" aria-hidden>
-            <span className="game-card-fallback-initial">{initial}</span>
-            <span className="game-card-fallback-hint">No cover</span>
-          </div>
-        )}
+        <SteamArt
+          appId={game.appId}
+          name={game.name}
+          artwork={artwork}
+          variant="portrait"
+          className=""
+          alt=""
+          framed={false}
+        />
         <div className="game-card-shade" />
         {showRank ? (
           <div className={`game-card-rank ${rankMedalClass(rank)}`}>
@@ -143,25 +123,34 @@ export function GameLibrary({
   data,
   view: viewProp,
   onViewChange,
+  query: queryProp,
+  onQueryChange,
   searchInputRef,
   onOpenGlossary,
 }: {
   data: DashboardPayload;
   view?: LibraryView;
   onViewChange?: (view: LibraryView) => void;
+  query?: string;
+  onQueryChange?: (query: string) => void;
   searchInputRef?: Ref<HTMLInputElement>;
   onOpenGlossary?: (termId?: string) => void;
 }) {
   const { playtime, meta, artwork } = data;
-  const [query, setQuery] = useState("");
-  const [internalView, setInternalView] = useState<LibraryView>("hours");
-  const view = viewProp ?? internalView;
-  const setView = onViewChange ?? setInternalView;
+  const query = queryProp ?? "";
+  const setQuery = onQueryChange ?? (() => undefined);
+  const view = viewProp ?? "hours";
+  const setView = onViewChange ?? (() => undefined);
 
   const maxHours = playtime.games[0]?.hoursForever || 1;
-  const featured = playtime.games[0];
+  const hoursRankById = useMemo(() => {
+    const map = new Map<number, number>();
+    playtime.games.forEach((g, i) => map.set(g.appId, i + 1));
+    return map;
+  }, [playtime.games]);
   const partialLibrary =
     !meta.hasSteamApiKey && playtime.source === "account-data-html";
+  const emptyLibrary = playtime.games.length === 0;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -184,6 +173,8 @@ export function GameLibrary({
     }
     return list;
   }, [playtime.games, query, view]);
+
+  const featured = query.trim() ? filtered[0] : playtime.games[0];
 
   return (
     <div className="flex flex-col gap-5">
@@ -240,31 +231,20 @@ export function GameLibrary({
           <AlertDescription>
             <p>
               Showing {playtime.games.length} titles from your Account Data
-              games page (often a short list). Add a Steam Web API key for the
+              games page (often a short list). Refresh Steam data to load the
               full owned set.
             </p>
-            <details className="library-setup-details">
-              <summary>Show setup steps</summary>
-              <ol>
-                <li>
-                  Copy <code className="font-mono text-primary">.env.example</code>{" "}
-                  to <code className="font-mono text-primary">.env.local</code>{" "}
-                  and set <code className="font-mono text-primary">STEAM_API_KEY</code>.
-                </li>
-                <li>
-                  Or run{" "}
-                  <code className="font-mono text-primary">
-                    npm run fetch:owned-games
-                  </code>{" "}
-                  after a Steam login session.
-                </li>
-              </ol>
-            </details>
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {featured && view !== "panorama" ? (
+      {emptyLibrary ? (
+        <p className="text-sm text-muted-foreground">
+          No games on the shelf yet. Refresh Steam data, then reload.
+        </p>
+      ) : null}
+
+      {featured && view !== "panorama" && !emptyLibrary ? (
         <section className="library-hero library-hero-compact">
           <HeroBanner
             appId={featured.appId}
@@ -275,7 +255,9 @@ export function GameLibrary({
           />
           <div className="library-hero-veil" />
           <div className="library-hero-content">
-            <p className="library-hero-role">Most played</p>
+            <p className="library-hero-role">
+              {query.trim() ? "Top match" : "Most played"}
+            </p>
             <h3 className="library-hero-title">{featured.name}</h3>
             <div className="library-hero-featured-stat">
               <span className="library-hero-stat-num">
@@ -355,12 +337,7 @@ export function GameLibrary({
               <GameCard
                 key={game.appId}
                 game={game}
-                rank={
-                  view === "hours"
-                    ? playtime.games.findIndex((g) => g.appId === game.appId) +
-                      1
-                    : null
-                }
+                rank={view === "hours" ? hoursRankById.get(game.appId) : null}
                 index={i}
                 maxHours={maxHours}
                 artwork={artwork}

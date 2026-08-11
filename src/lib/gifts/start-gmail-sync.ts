@@ -2,14 +2,12 @@
  * Spawn Gmail sync as a separate Node process so headed browser isn’t trapped
  * inside the Next.js request lifecycle (timeouts / syncLock / Turbopack).
  */
-import { spawn } from "node:child_process";
 import {
   isGmailSyncRunning,
   readGmailSyncStatus,
   type GmailSyncStatus,
 } from "@/lib/gifts/sync-gmail-playwright";
-
-const ROOT = process.cwd();
+import { spawnDetachedScript } from "@/lib/process/spawn-script";
 
 export type StartGmailSyncResult = {
   started: boolean;
@@ -37,14 +35,7 @@ export async function startGmailSyncProcess(): Promise<StartGmailSyncResult> {
   }
 
   try {
-    const child = spawn("npm", ["run", "sync:gifts-gmail", "--silent"], {
-      cwd: ROOT,
-      detached: true,
-      stdio: "ignore",
-      shell: true,
-      env: { ...process.env },
-    });
-    child.unref();
+    spawnDetachedScript("scripts/sync-gifts-gmail.ts");
 
     // Brief wait so status.json / pid get written
     await new Promise((r) => setTimeout(r, 600));

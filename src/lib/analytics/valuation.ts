@@ -1,5 +1,6 @@
 import type { LicenseRow, PurchaseHistoryRow } from "@/lib/account-data";
 import {
+  buildAcquisitionIndex,
   classifyAcquisition,
   normTitle,
   titlesSoftMatch,
@@ -822,6 +823,7 @@ export function buildLibraryValuation(
   const sentTitles = giftSentTitles(purchases);
   const ownedKeys = new Set((opts?.ownedTitles ?? []).map(norm));
   const libraryTitleKeys = libraryTitles.map(norm);
+  const acquisitionIndex = buildAcquisitionIndex(licenses, purchases);
 
   const games: ValuationGame[] = [];
   const giftsSentGames: ValuationGame[] = [];
@@ -859,6 +861,7 @@ export function buildLibraryValuation(
       mailGiftTitles,
       mailGiftSenders,
       priceHint,
+      index: acquisitionIndex,
     });
 
     const giftedFrom =

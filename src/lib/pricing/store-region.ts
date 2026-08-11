@@ -265,11 +265,20 @@ export function storeRegionLabel(country: string): string {
 export async function resolveStoreRegionFromAccount(opts?: {
   cachedCountry?: string | null;
   cachedCurrency?: string | null;
+  purchases?: PurchaseHistoryRow[];
+  loginCountries?: string[];
 }): Promise<StoreRegion> {
-  const bundle = await loadLocalAccountData().catch(() => null);
-  const spendCurrency = bundle ? pickSpendCurrency(bundle.purchases) : null;
+  let purchases = opts?.purchases;
+  let loginCountries = opts?.loginCountries;
+  if (!purchases || loginCountries == null) {
+    const bundle = await loadLocalAccountData().catch(() => null);
+    purchases = purchases ?? bundle?.purchases;
+    loginCountries =
+      loginCountries ?? bundle?.loginHistory.map((r) => r.country) ?? [];
+  }
+  const spendCurrency = purchases ? pickSpendCurrency(purchases) : null;
   return detectStoreRegion({
-    loginCountries: bundle?.loginHistory.map((r) => r.country) ?? [],
+    loginCountries: loginCountries ?? [],
     spendCurrency,
     cachedCountry: opts?.cachedCountry ?? null,
     cachedCurrency: opts?.cachedCurrency ?? null,

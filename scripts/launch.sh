@@ -75,15 +75,16 @@ npm run parse:account-data
 
 echo
 bold "Step 3/4 — Full library playtime"
-npm run fetch:owned-games
+if ! npm run fetch:owned-games; then
+  info "Owned-games refresh failed — using the last saved library if present."
+fi
 
 if [[ "$SKIP_PRICES" != "1" ]]; then
   echo
-  bold "Step 4/4 — Lows refresh"
-  info "Dashboard refreshes India lows at most once per week (stored in data/price-cache.json)."
-  info "Skip this notice with STEAM_STATS_SKIP_PRICES=1"
+  bold "Step 4/4 — Dashboard"
+  info "Store lows refresh in the background if quotes are older than a week."
 else
-  info "Skipping price refresh (STEAM_STATS_SKIP_PRICES=1)"
+  info "Skipping price-refresh notice (STEAM_STATS_SKIP_PRICES=1)"
 fi
 
 echo

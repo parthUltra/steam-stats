@@ -70,13 +70,28 @@ function mergePlaytime(
   };
 }
 
+const PLAYTIME_TTL_MS = 6 * 60 * 60 * 1000;
+
 async function loadFullLibraryPlaytime(
   htmlGames: PlayedGame[],
   steamId: string | null,
+  fetchedAt?: string | null,
 ): Promise<{
   games: PlayedGame[];
   source: "account-data-html" | "steam-api" | "merged";
 }> {
+  const fetchedMs = fetchedAt ? Date.parse(fetchedAt) : NaN;
+  if (
+    htmlGames.length > 0 &&
+    Number.isFinite(fetchedMs) &&
+    Date.now() - fetchedMs < PLAYTIME_TTL_MS
+  ) {
+    return {
+      games: htmlGames,
+      source: htmlGames.length > 40 ? "steam-api" : "account-data-html",
+    };
+  }
+
   let ownedFromApi: PlayedGame[] = [];
   let source: "account-data-html" | "steam-api" | "merged" =
     "account-data-html";
@@ -128,6 +143,7 @@ export async function buildDashboard(options?: {
   const full = await loadFullLibraryPlaytime(
     bundle.playedGames,
     bundle.steamId,
+    bundle.playedFetchedAt,
   );
   const playedGames = full.games;
   const playtimeSource = full.source;
@@ -169,8 +185,10 @@ export async function buildDashboard(options?: {
     ]),
   ];
   let priceCache = await loadPriceCache();
-  const { region, cache: regionCache } =
-    await resolveAndApplyStoreRegion(priceCache);
+  const { region, cache: regionCache } = await resolveAndApplyStoreRegion(
+    priceCache,
+    bundle,
+  );
   priceCache = regionCache;
   // priceLimit 0 = cache only (preferred). Non-zero tops up missing/stale
   // quotes (7-day TTL unless force) — used by CLI refresh, not dashboard load.

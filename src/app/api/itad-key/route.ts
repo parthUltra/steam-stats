@@ -3,6 +3,7 @@ import {
   resolveItadApiKey,
   saveItadCredentials,
 } from "@/lib/pricing/itad-credentials";
+import { rejectCrossOrigin } from "@/lib/http/same-origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,8 @@ export async function GET() {
  * Client should start /api/refresh-prices after a successful save.
  */
 export async function POST(req: Request) {
+  const denied = rejectCrossOrigin(req);
+  if (denied) return denied;
   try {
     const body = (await req.json().catch(() => ({}))) as {
       apiKey?: string;

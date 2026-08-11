@@ -8,6 +8,9 @@ import { GlossaryDrawer } from "@/components/GlossaryDrawer";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CircleHelpIcon } from "lucide-react";
+import { useGmailSync } from "@/components/use-gmail-sync";
+import { useItadKey } from "@/components/use-itad-key";
+import type { LowsProgress } from "@/components/DashboardClient";
 
 const STEAM_MARK = (
   <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden>
@@ -29,15 +32,26 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function DashboardView({
   data,
   onRefresh,
+  lowsProgress,
+  onRefreshLows,
 }: {
   data: DashboardPayload;
   onRefresh?: () => Promise<void> | void;
+  lowsProgress?: LowsProgress | null;
+  onRefreshLows?: (opts?: { force?: boolean }) => Promise<void> | void;
 }) {
   const [tab, setTab] = useState("library");
   const [libraryView, setLibraryView] = useState<LibraryView>("hours");
+  const [libraryQuery, setLibraryQuery] = useState("");
   const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [glossaryFocus, setGlossaryFocus] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const gmail = useGmailSync(onRefresh);
+  const itad = useItadKey(
+    Boolean(data.meta.hasItadApiKey),
+    onRefresh,
+    onRefreshLows,
+  );
 
   const openGlossary = useCallback((termId?: string) => {
     setGlossaryFocus(termId ?? null);
@@ -56,7 +70,7 @@ export function DashboardView({
 
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
-      if (key === "/" ) {
+      if (key === "/") {
         e.preventDefault();
         setTab("library");
         setLibraryView((v) => (v === "panorama" ? "hours" : v));
@@ -97,11 +111,7 @@ export function DashboardView({
   }, [tab]);
 
   return (
-    <Tabs
-      value={tab}
-      onValueChange={setTab}
-      className="flex flex-col gap-5"
-    >
+    <Tabs value={tab} onValueChange={setTab} className="flex flex-col gap-5">
       <header className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border/80 bg-card/80 px-4 py-3 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div
@@ -152,6 +162,8 @@ export function DashboardView({
           data={data}
           view={libraryView}
           onViewChange={setLibraryView}
+          query={libraryQuery}
+          onQueryChange={setLibraryQuery}
           searchInputRef={searchRef}
           onOpenGlossary={openGlossary}
         />
@@ -159,8 +171,10 @@ export function DashboardView({
       <TabsContent value="spending" className="mt-0 outline-none">
         <SpendingValue
           data={data}
-          onRefresh={onRefresh}
           onOpenGlossary={openGlossary}
+          lowsProgress={lowsProgress}
+          gmail={gmail}
+          itad={itad}
         />
       </TabsContent>
     </Tabs>

@@ -139,10 +139,52 @@ export type PaidLookup = {
  * Resolve cost basis for a library title, including soft matches and
  * collection/bundle checkouts that list the pack name instead of each game.
  */
+export type AcquisitionIndex = {
+  giftLicenses: LicenseRow[];
+  complimentaryLicenses: LicenseRow[];
+  ownedLicenses: LicenseRow[];
+  packNames: string[];
+};
+
+/** Scan licenses / purchases once, then classify each title against the index. */
+export function buildAcquisitionIndex(
+  licenses: LicenseRow[],
+  purchases: PurchaseHistoryRow[],
+): AcquisitionIndex {
+  const giftLicenses: LicenseRow[] = [];
+  const complimentaryLicenses: LicenseRow[] = [];
+  const ownedLicenses: LicenseRow[] = [];
+  for (const lic of licenses) {
+    if (isGiftReceivedLicense(lic)) giftLicenses.push(lic);
+    if ((lic.acquisitionMethod || "").toLowerCase().includes("complimentary")) {
+      complimentaryLicenses.push(lic);
+    }
+    if (isOwnedLibraryLicense(lic)) ownedLicenses.push(lic);
+  }
+
+  const packNames: string[] = [];
+  for (const row of purchases) {
+    if (isGiftPurchase(row) || row.refunded) continue;
+    if (!isTrackableGamePurchase(row)) continue;
+    const names = row.lineItems?.length
+      ? row.lineItems
+          .filter(
+            (l) => l.amount != null && l.amount >= 0 && !isGiftCardName(l.name),
+          )
+          .map((l) => l.name)
+      : row.items.filter((i) => !isGiftCardName(i));
+    for (const name of names) {
+      if (isPackPurchaseName(name)) packNames.push(name);
+    }
+  }
+
+  return { giftLicenses, complimentaryLicenses, ownedLicenses, packNames };
+}
+
 export function lookupPaidForTitle(
   title: string,
   paidByExact: Map<string, number>,
-  purchases: PurchaseHistoryRow[],
+  packNames: string[],
 ): PaidLookup {
   const key = normTitle(title);
   if (paidByExact.has(key)) {
@@ -164,26 +206,13 @@ export function lookupPaidForTitle(
     return { amount: bestSoft.amount, via: "soft", coveredBy: bestSoft.otherKey };
   }
 
-  // Collection / bundle rows: mark coverage without attributing full pack price
-  // to every included title (that would inflate shelf cost basis).
-  for (const row of [...purchases].reverse()) {
-    if (isGiftPurchase(row) || row.refunded) continue;
-    if (!isTrackableGamePurchase(row)) continue;
-
-    const names = row.lineItems?.length
-      ? row.lineItems
-          .filter((l) => l.amount != null && l.amount >= 0 && !isGiftCardName(l.name))
-          .map((l) => l.name)
-      : row.items.filter((i) => !isGiftCardName(i));
-
-    for (const name of names) {
-      if (packCoversTitle(name, title)) {
-        return {
-          amount: 0,
-          via: "bundle",
-          coveredBy: name,
-        };
-      }
+  for (const name of packNames) {
+    if (packCoversTitle(name, title)) {
+      return {
+        amount: 0,
+        via: "bundle",
+        coveredBy: name,
+      };
     }
   }
 
@@ -215,6 +244,8 @@ export type ClassifyInput = {
   /** Optional persona per mail gift title (norm key → Steam name) */
   mailGiftSenders?: Map<string, string>;
   priceHint?: { current: number | null; retail: number | null };
+  /** Precomputed license/pack lists — build once per valuation. */
+  index?: AcquisitionIndex;
 };
 
 export type ClassifyResult = {
@@ -240,10 +271,11 @@ export function classifyAcquisition(input: ClassifyInput): ClassifyResult {
     priceHint,
   } = input;
   const key = normTitle(title);
+  const index =
+    input.index ?? buildAcquisitionIndex(licenses, purchases);
 
   // 1a) Steam still lists a Gift/Guest Pass license
-  for (const lic of licenses) {
-    if (!isGiftReceivedLicense(lic)) continue;
+  for (const lic of index.giftLicenses) {
     if (!titlesSoftMatch(lic.item, title) && normTitle(lic.item) !== key) continue;
     return { kind: "gifted_to_me", paid: 0, note: "Steam Gift/Guest Pass" };
   }
@@ -264,7 +296,7 @@ export function classifyAcquisition(input: ClassifyInput): ClassifyResult {
   }
 
   // 2) Wallet / bundle coverage
-  const paid = lookupPaidForTitle(title, paidByExact, purchases);
+  const paid = lookupPaidForTitle(title, paidByExact, index.packNames);
   if (paid.via === "bundle") {
     return {
       kind: "bundle",
@@ -282,7 +314,7 @@ export function classifyAcquisition(input: ClassifyInput): ClassifyResult {
 
   // 3) Complimentary keep (free claim that stayed) — also match promo package
   // names onto the base game when you still own/play it.
-  for (const lic of licenses) {
+  for (const lic of index.complimentaryLicenses) {
     const method = (lic.acquisitionMethod || "").toLowerCase();
     if (!method.includes("complimentary")) continue;
     const raw = lic.item.trim();
@@ -319,9 +351,8 @@ export function classifyAcquisition(input: ClassifyInput): ClassifyResult {
   }
 
   // License says Steam Store / Retail but no purchase row matched — still not a gift
-  const storeLic = licenses.find(
+  const storeLic = index.ownedLicenses.find(
     (l) =>
-      isOwnedLibraryLicense(l) &&
       titlesSoftMatch(l.item, title) &&
       /steam store|retail/i.test(l.acquisitionMethod || ""),
   );
@@ -344,7 +375,7 @@ export function classifyAcquisition(input: ClassifyInput): ClassifyResult {
           return false;
         }
         // Prefer evidence the base was paid / soft-paid
-        const otherPaid = lookupPaidForTitle(other, paidByExact, purchases);
+        const otherPaid = lookupPaidForTitle(other, paidByExact, index.packNames);
         return otherPaid.amount != null && otherPaid.amount > 0;
       });
       if (hasPaidBase) {
@@ -358,7 +389,7 @@ export function classifyAcquisition(input: ClassifyInput): ClassifyResult {
   }
 
   // 6) Owned with playtime (or license) but no wallet match — unknown, not a gift
-  if (ownedKeys.has(key) || licenses.some((l) => isOwnedLibraryLicense(l) && titlesSoftMatch(l.item, title))) {
+  if (ownedKeys.has(key) || index.ownedLicenses.some((l) => titlesSoftMatch(l.item, title))) {
     return {
       kind: "unknown_unpaid",
       paid: 0,

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Outfit } from "next/font/google";
 import { DevLiveReload } from "@/components/DevLiveReload";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
@@ -36,13 +35,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <DevLiveReload />
-        <TooltipProvider>
-          <div className="ambient" aria-hidden>
-            <span className="ambient-orb ambient-orb-a" />
-            <span className="ambient-orb ambient-orb-b" />
-          </div>
-          <div className="shell">{children}</div>
-        </TooltipProvider>
+        <div className="ambient" aria-hidden>
+          <span className="ambient-orb ambient-orb-a" />
+          <span className="ambient-orb ambient-orb-b" />
+        </div>
+        <div className="shell">{children}</div>
       </body>
     </html>
   );

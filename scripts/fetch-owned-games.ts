@@ -10,9 +10,38 @@ import { fetchOwnedGamesFromSteamSession } from "../src/lib/steam/owned-games";
 
 const OUT = path.resolve(__dirname, "..", "samples", "parsed", "games-played.json");
 
+async function existingLibraryExists(): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(OUT, "utf8");
+    const parsed = JSON.parse(raw) as { games?: unknown[] };
+    return Array.isArray(parsed.games) && parsed.games.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
-  const result = await fetchOwnedGamesFromSteamSession();
+  let result;
+  try {
+    result = await fetchOwnedGamesFromSteamSession();
+  } catch (err) {
+    if (await existingLibraryExists()) {
+      console.warn(
+        "Owned-games refresh failed; keeping the last saved library.",
+      );
+      console.warn(err instanceof Error ? err.message : err);
+      process.exit(0);
+    }
+    throw err;
+  }
+
   if (!result) {
+    if (await existingLibraryExists()) {
+      console.warn(
+        "No Steam session found; keeping the last saved library.",
+      );
+      process.exit(0);
+    }
     console.error(
       "No Steam session found. Run: npm run fetch:account-data (log in once)",
     );
@@ -41,7 +70,14 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
+  if (await existingLibraryExists()) {
+    console.warn(
+      "Owned-games refresh failed; keeping the last saved library.",
+    );
+    console.warn(err instanceof Error ? err.message : err);
+    process.exit(0);
+  }
   console.error(err);
   process.exit(1);
 });

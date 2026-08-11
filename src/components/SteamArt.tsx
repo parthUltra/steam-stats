@@ -106,7 +106,7 @@ export function SteamArt({
     ? `spend-thumb ${variantClass}`
     : "";
 
-  const label = (alt && alt.trim()) || name.trim() || "Game";
+  const label = alt === "" ? "" : (alt?.trim() || name.trim() || "Game");
   const initial = label.slice(0, 1).toUpperCase() || "?";
 
   if (failed) {
@@ -116,8 +116,9 @@ export function SteamArt({
           className={["steam-art-fallback", variantClass, className]
             .filter(Boolean)
             .join(" ")}
-          role="img"
-          aria-label={label}
+          role={label ? "img" : undefined}
+          aria-label={label || undefined}
+          aria-hidden={label ? undefined : true}
         >
           <span aria-hidden>{initial}</span>
         </div>

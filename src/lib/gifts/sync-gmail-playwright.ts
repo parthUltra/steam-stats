@@ -23,16 +23,27 @@ const STATUS_FILE = path.join(SESSION_DIR, "status.json");
 const PID_FILE = path.join(SESSION_DIR, "sync.pid");
 const LAST_SCRAPE_FILE = path.join(SESSION_DIR, "last-scrape.txt");
 
-/** Precise Steam gift searches — simple phrases; Gmail hash URLs break on nested OR/quotes. */
-const SEARCH_QUERIES = [
-  'from:steampowered.com "gift copy of the game"',
+/** One query covers Steam gift notifications — avoid looping 4 near-duplicate searches. */
+const PRIMARY_SEARCH =
+  'from:steampowered.com "gift copy of the game"';
+/** Fallback if the primary phrase misses older wording. */
+const FALLBACK_SEARCHES = [
   'from:steampowered.com "You\'ve received a gift"',
   'from:steampowered.com "has given you"',
-  'from:steampowered.com "been sent a gift"',
 ];
 
 const ROW_SELECTOR =
   "div[role='main'] tr.zA, div[role='main'] div.Cp tr.zA, table.F tr.zA, tr.zA";
+
+/** Shorter pauses — Gmail is usually ready well before the old multi-second waits. */
+const WAIT = {
+  afterTypeSearch: 900,
+  afterHashNav: 700,
+  afterOpenMessage: 450,
+  afterEscape: 350,
+  scrollSettle: 250,
+  inboxReady: 600,
+} as const;
 
 function looksLikeSteamGiftSubject(s: string): boolean {
   return /gift copy|received a gift|has given you|been sent a gift|ackgift/i.test(
@@ -230,7 +241,7 @@ async function typeSearchInBox(page: Page, query: string): Promise<boolean> {
       await page.keyboard.press("Backspace");
       await box.fill(query);
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(2800);
+      await page.waitForTimeout(WAIT.afterTypeSearch);
       return true;
     } catch {
       // try next selector
@@ -255,7 +266,7 @@ async function waitForSearchSettled(page: Page) {
       );
     })()`);
     if (empty) return;
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(300);
   }
 }
 
@@ -270,7 +281,7 @@ async function runSearch(page: Page, query: string) {
         waitUntil: "domcontentloaded",
         timeout: 120_000,
       });
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(WAIT.inboxReady);
     }
   } catch {
     // continue
@@ -291,7 +302,7 @@ async function runSearch(page: Page, query: string) {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
-    await page.waitForTimeout(2200);
+    await page.waitForTimeout(WAIT.afterHashNav);
   }
 
   await waitForSearchSettled(page);
@@ -310,13 +321,13 @@ async function runSearch(page: Page, query: string) {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
-    await page.waitForTimeout(2200);
+    await page.waitForTimeout(WAIT.afterHashNav);
     await waitForSearchSettled(page);
   }
 }
 
 async function scrollResults(page: Page) {
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 4; i++) {
     const before = await page.locator(ROW_SELECTOR).count().catch(() => 0);
     await page.evaluate(`(() => {
       const main =
@@ -325,7 +336,7 @@ async function scrollResults(page: Page) {
         document.scrollingElement;
       if (main) main.scrollTop += 1400;
     })()`);
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(WAIT.scrollSettle);
     const after = await page.locator(ROW_SELECTOR).count().catch(() => 0);
     if (after <= before) break;
   }
@@ -395,20 +406,24 @@ async function extractOpenMessage(page: Page): Promise<string> {
 }
 
 async function forceSearchList(page: Page, searchUrl: string) {
-  // Always reload the search list — Escape / split-pane leaves stale rows and
-  // the next nth(i) click no-ops after the first message.
+  // Prefer Escape back to the list — full reload only when rows are gone.
   try {
     await page.keyboard.press("Escape");
   } catch {
     // ignore
   }
+  await page.waitForTimeout(WAIT.afterEscape);
+  const onSearch = page.url().includes("#search");
+  const n = await page.locator(ROW_SELECTOR).count().catch(() => 0);
+  if (onSearch && n > 0) return;
+
   await page.goto(searchUrl, {
     waitUntil: "domcontentloaded",
     timeout: 60_000,
   });
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(WAIT.afterHashNav);
   try {
-    await page.waitForSelector(ROW_SELECTOR, { timeout: 12_000 });
+    await page.waitForSelector(ROW_SELECTOR, { timeout: 8_000 });
   } catch {
     // empty or still loading
   }
@@ -433,8 +448,8 @@ async function openGiftRowsAndCollectBodies(
 
   for (let i = 0; i < total; i++) {
     try {
-      // Fresh list every iteration
-      if (i > 0 || !page.url().includes("#search/")) {
+      // Previous iteration's finally already Escaped back to the list.
+      if (i === 0 && !page.url().includes("#search/")) {
         await forceSearchList(page, searchUrl);
       }
 
@@ -470,10 +485,10 @@ async function openGiftRowsAndCollectBodies(
         continue;
       }
 
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(WAIT.afterOpenMessage);
       try {
         await page.waitForSelector("h2.hP, div.a3s, div.ii.gt", {
-          timeout: 6_000,
+          timeout: 5_000,
         });
       } catch {
         // still try extract
@@ -544,7 +559,7 @@ async function openEachGiftSubject(
       });
       console.log(`  focused search: ${query}`);
       await runSearch(page, query);
-      await page.waitForTimeout(1100);
+      await page.waitForTimeout(WAIT.afterTypeSearch);
 
       const indexes = await giftRowIndexes(page);
       const rows = page.locator(ROW_SELECTOR);
@@ -562,10 +577,10 @@ async function openEachGiftSubject(
         await rows.nth(idx).click({ timeout: 4000 });
       }
 
-      await page.waitForTimeout(900);
+      await page.waitForTimeout(WAIT.afterOpenMessage);
       try {
         await page.waitForSelector("h2.hP, div.a3s, div.ii.gt", {
-          timeout: 6_000,
+          timeout: 5_000,
         });
       } catch {
         // ignore
@@ -611,20 +626,44 @@ function subjectsToRaw(subjects: string[]): string {
     .join("\n\n----\n\n");
 }
 
+function giftTitleFromSubject(subject: string): string | null {
+  const m = subject.match(
+    /gift copy of(?:\s+the game)?\s+(.+?)(?:\s+on Steam)?$/i,
+  );
+  return m?.[1]?.trim() || null;
+}
+
+function storeAlreadyHasSender(
+  store: GiftsReceivedStore,
+  title: string,
+): boolean {
+  const t = title.toLowerCase();
+  return store.gifts.some(
+    (g) =>
+      Boolean(g.fromPersona && g.giftUrl) &&
+      (g.title.toLowerCase() === t ||
+        g.title.toLowerCase().includes(t) ||
+        t.includes(g.title.toLowerCase())),
+  );
+}
+
 async function scrapeGiftEmailText(page: Page): Promise<ScrapeResult> {
   const allGiftSubjects = new Set<string>();
   const allBodies: string[] = [];
   let threadsOpened = 0;
   let queriesTried = 0;
+  const existing = await loadReceivedGifts();
 
-  for (let qi = 0; qi < SEARCH_QUERIES.length; qi++) {
-    const query = SEARCH_QUERIES[qi];
+  const queries = [PRIMARY_SEARCH, ...FALLBACK_SEARCHES];
+
+  for (let qi = 0; qi < queries.length; qi++) {
+    const query = queries[qi];
     queriesTried = qi + 1;
     await writeStatus({
       phase: "scraping",
-      message: `Searching: ${query}`,
+      message: qi === 0 ? "Searching Steam gift mail…" : "Trying another search…",
     });
-    console.log(`\nGmail search ${qi + 1}/${SEARCH_QUERIES.length}: ${query}`);
+    console.log(`\nGmail search ${qi + 1}/${queries.length}: ${query}`);
 
     await runSearch(page, query);
     await scrollResults(page);
@@ -636,90 +675,102 @@ async function scrapeGiftEmailText(page: Page): Promise<ScrapeResult> {
     console.log(`  gift-like subjects: ${subjects.length}`);
     for (const s of subjects.slice(0, 8)) console.log(`    · ${s}`);
 
-    const subjectRaw = subjectsToRaw([...allGiftSubjects]);
-    const fromSubjects = parseSteamGiftEmails(subjectRaw);
-    console.log(`  parsed from subjects: ${fromSubjects.length}`);
-
-    if (fromSubjects.length > 0) {
-      await writeStatus({
-        phase: "scraping",
-        message: `Found ${fromSubjects.length} gift(s) — reading who sent each one…`,
-        messagesScanned: fromSubjects.length,
-      });
-
-      // Per-subject search is reliable; multi-row click often dies after mail #1.
-      const bodies = await openEachGiftSubject(
-        page,
-        [...allGiftSubjects],
-        async (opened, total) => {
-          threadsOpened = opened;
-          await writeStatus({
-            phase: "scraping",
-            message: `Reading gift senders… ${opened}/${total}`,
-            messagesScanned: fromSubjects.length,
-          });
-        },
-      );
-      allBodies.push(...bodies);
-
-      // If per-subject missed some, try walking the combined list once more
-      if (bodies.length < fromSubjects.length) {
-        console.log(
-          `  per-subject got ${bodies.length}/${fromSubjects.length} — trying list walk`,
-        );
-        await runSearch(page, query);
-        await scrollResults(page);
-        const more = await openGiftRowsAndCollectBodies(
-          page,
-          Math.min(40, fromSubjects.length),
-          async (opened, total) => {
-            threadsOpened = Math.max(threadsOpened, opened);
-            await writeStatus({
-              phase: "scraping",
-              message: `Reading gift senders… ${opened}/${total}`,
-              messagesScanned: fromSubjects.length,
-            });
-          },
-        );
-        allBodies.push(...more);
-      }
-
-      console.log(
-        `  sender bodies kept: ${allBodies.length} — will save & close`,
-      );
-      break;
-    }
-
     const giftRows = await giftRowIndexes(page);
-    if (!giftRows.length) {
+    if (!subjects.length && !giftRows.length) {
       console.log("  no gift-like rows for this query");
       continue;
     }
 
+    const expected = Math.max(
+      subjects.length,
+      giftRows.length,
+      parseSteamGiftEmails(subjectsToRaw([...allGiftSubjects])).length,
+    );
+
+    const needSenderSubjects = [...allGiftSubjects].filter((subject) => {
+      const title = giftTitleFromSubject(subject);
+      return title ? !storeAlreadyHasSender(existing, title) : true;
+    });
+
+    if (!needSenderSubjects.length && expected > 0) {
+      console.log(
+        "  all gift subjects already have senders in store — skipping body scrape",
+      );
+      await writeStatus({
+        phase: "scraping",
+        message: `Found ${expected} gift(s) — already synced`,
+        messagesScanned: expected,
+      });
+      break;
+    }
+
     await writeStatus({
       phase: "scraping",
-      message: `Opening ${Math.min(giftRows.length, 20)} Steam gift thread(s)…`,
+      message: `Found ${expected || giftRows.length} gift(s) — reading senders…`,
+      messagesScanned: expected || giftRows.length,
     });
+
+    // Fast path: walk the result list once (one search, Escape between mails).
     const bodies = await openGiftRowsAndCollectBodies(
       page,
-      Math.min(20, giftRows.length),
+      Math.min(40, Math.max(giftRows.length, expected, 1)),
       async (opened, total) => {
-        threadsOpened = opened;
+        threadsOpened = Math.max(threadsOpened, opened);
         await writeStatus({
           phase: "scraping",
           message: `Reading gift emails… ${opened}/${total}`,
-          messagesScanned: opened,
+          messagesScanned: expected || total,
         });
       },
     );
     allBodies.push(...bodies);
-    console.log(`  opened gift bodies kept: ${bodies.length}`);
+    console.log(`  list walk kept ${bodies.length} body(ies)`);
 
-    const preview = parseSteamGiftEmails(
-      [subjectRaw, ...allBodies].filter(Boolean).join("\n\n----\n\n"),
+    const parsedTitles = parseSteamGiftEmails(
+      [subjectsToRaw([...allGiftSubjects]), ...allBodies]
+        .filter(Boolean)
+        .join("\n\n----\n\n"),
     );
-    if (preview.length > 0) {
-      console.log(`  parsed ${preview.length} gift(s) — stopping further searches`);
+    const withSender = parsedTitles.filter((g) => g.fromPersona).length;
+    console.log(
+      `  parsed ${parsedTitles.length} gift(s), ${withSender} with sender`,
+    );
+
+    // Only focused-search titles still missing a body/sender (not every mail).
+    const missingSubjects = [...allGiftSubjects].filter((subject) => {
+      const title = giftTitleFromSubject(subject);
+      if (!title) return false;
+      if (storeAlreadyHasSender(existing, title)) return false;
+      const hit = parsedTitles.find(
+        (g) =>
+          g.title.toLowerCase() === title.toLowerCase() ||
+          g.title.toLowerCase().includes(title.toLowerCase()) ||
+          title.toLowerCase().includes(g.title.toLowerCase()),
+      );
+      return !hit?.fromPersona || !hit?.giftUrl;
+    });
+
+    if (missingSubjects.length && withSender < expected) {
+      console.log(
+        `  filling ${missingSubjects.length} missing sender(s) via focused search`,
+      );
+      const more = await openEachGiftSubject(
+        page,
+        missingSubjects,
+        async (opened, total) => {
+          threadsOpened = Math.max(threadsOpened, opened);
+          await writeStatus({
+            phase: "scraping",
+            message: `Reading missing senders… ${opened}/${total}`,
+            messagesScanned: expected,
+          });
+        },
+      );
+      allBodies.push(...more);
+    }
+
+    if (parsedTitles.length > 0 || allBodies.length > 0) {
+      console.log("  done — saving & closing");
       break;
     }
   }

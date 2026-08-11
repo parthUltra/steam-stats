@@ -5,9 +5,10 @@ const ALLOWED_HOSTS = new Set([
   "cdn.cloudflare.steamstatic.com",
   "steamcdn-a.akamaihd.net",
   "shared.fastly.steamstatic.com",
-  "steamcommunity.com",
   "cdn.akamai.steamstatic.com",
 ]);
+
+const MAX_BYTES = 8 * 1024 * 1024;
 
 /** Same-origin proxy so panorama export can draw Steam CDN art onto canvas. */
 export async function GET(req: NextRequest) {
@@ -29,6 +30,7 @@ export async function GET(req: NextRequest) {
 
   const upstream = await fetch(target.toString(), {
     headers: { Accept: "image/*" },
+    redirect: "error",
     next: { revalidate: 60 * 60 * 24 * 7 },
   });
 
@@ -41,7 +43,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Not an image" }, { status: 415 });
   }
 
-  return new NextResponse(upstream.body, {
+  const length = Number(upstream.headers.get("content-length") ?? 0);
+  if (Number.isFinite(length) && length > MAX_BYTES) {
+    return NextResponse.json({ error: "Image too large" }, { status: 413 });
+  }
+
+  const buf = Buffer.from(await upstream.arrayBuffer());
+  if (buf.byteLength > MAX_BYTES) {
+    return NextResponse.json({ error: "Image too large" }, { status: 413 });
+  }
+
+  return new NextResponse(buf, {
     status: 200,
     headers: {
       "Content-Type": contentType,

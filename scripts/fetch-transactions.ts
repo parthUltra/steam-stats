@@ -87,10 +87,6 @@ async function main() {
     "utf8",
   );
 
-  const rain = rows.find((r) =>
-    r.items.some((i) => /rain world/i.test(i)),
-  );
-  console.log("\nRain World row lineItems:", rain?.lineItems);
   console.log("Done. Re-open the dashboard to see corrected paid amounts.");
 }
 

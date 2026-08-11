@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { loadLocalAccountData } from "@/lib/data/load-local";
 import { libraryTitlesForValuation } from "@/lib/analytics/spending";
+import { rejectCrossOrigin } from "@/lib/http/same-origin";
+import { spawnDetachedScript } from "@/lib/process/spawn-script";
 import {
   countLatestQuotes,
-  isIndiaLowsWeekFresh,
-  isQuoteLatestIndiaLow,
+  isStoreLowsWeekFresh,
+  isQuoteLatestStoreLow,
   loadPriceCache,
   PRICE_CACHE_TTL_MS,
 } from "@/lib/pricing/prices";
@@ -22,8 +23,6 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ROOT = process.cwd();
-
 async function libraryFreshness() {
   try {
     const bundle = await loadLocalAccountData();
@@ -32,13 +31,13 @@ async function libraryFreshness() {
     const counts = countLatestQuotes(titles, cache);
     return {
       ...counts,
-      weekFresh: isIndiaLowsWeekFresh(titles, cache),
+      weekFresh: isStoreLowsWeekFresh(titles, cache),
       titles,
     };
   } catch {
     const cache = await loadPriceCache();
     const quotes = Object.values(cache.quotes);
-    const latest = quotes.filter((q) => isQuoteLatestIndiaLow(q)).length;
+    const latest = quotes.filter((q) => isQuoteLatestStoreLow(q)).length;
     return {
       latest,
       total: quotes.length,
@@ -49,23 +48,21 @@ async function libraryFreshness() {
 }
 
 function startOneShotRefresh() {
-  const child = spawn("npm", ["run", "refresh:prices", "--silent"], {
-    cwd: ROOT,
-    detached: true,
-    stdio: "ignore",
-    shell: true,
-    env: { ...process.env },
-  });
-  child.unref();
-  return child;
+  return spawnDetachedScript("scripts/refresh-prices.ts");
 }
 
-/** GET — weekly store-low coverage + one-shot refresh status. */
+/** GET — cheap status from the refresh file + cache stamp. No library parse. */
 export async function GET() {
   const cache = await loadPriceCache();
   const running = await isPriceRefreshRunning();
   const status = await readPriceRefreshStatus();
-  const { latest, total, weekFresh } = await libraryFreshness();
+  const latest = status.latest ?? 0;
+  const total = status.libraryTotal ?? status.total ?? 0;
+  const updatedMs = cache.updatedAt ? Date.parse(cache.updatedAt) : 0;
+  const weekFresh =
+    Number.isFinite(updatedMs) &&
+    updatedMs > 0 &&
+    Date.now() - updatedMs < PRICE_CACHE_TTL_MS;
   return NextResponse.json({
     running,
     latest,
@@ -86,6 +83,8 @@ export async function GET() {
  * - force/restart: run even if fresh (e.g. right after saving an ITAD key).
  */
 export async function POST(req: Request) {
+  const denied = rejectCrossOrigin(req);
+  if (denied) return denied;
   try {
     const body = (await req.json().catch(() => ({}))) as {
       force?: boolean;

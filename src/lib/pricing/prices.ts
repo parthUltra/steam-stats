@@ -14,6 +14,10 @@ import {
   stripEditionNoise,
   titlesSoftMatch,
 } from "@/lib/analytics/acquisition";
+import type {
+  LoginHistoryRow,
+  PurchaseHistoryRow,
+} from "@/lib/account-data/parsers";
 
 export type GamePriceQuote = {
   title: string;
@@ -141,11 +145,17 @@ export async function applyStoreRegionToCache(
 
 export async function resolveAndApplyStoreRegion(
   cache?: PriceCache,
+  account?: {
+    purchases: PurchaseHistoryRow[];
+    loginHistory: LoginHistoryRow[];
+  },
 ): Promise<{ region: StoreRegion; cache: PriceCache }> {
   const loaded = cache ?? (await loadPriceCache());
   const region = await resolveStoreRegionFromAccount({
     cachedCountry: loaded.country,
     cachedCurrency: loaded.currency,
+    purchases: account?.purchases,
+    loginCountries: account?.loginHistory.map((r) => r.country),
   });
   await applyStoreRegionToCache(loaded, region);
   return { region, cache: loaded };
@@ -190,31 +200,12 @@ export function isWithinTtl(
   return now - t < ttlMs;
 }
 
-/** @deprecated Prefer `isWithinTtl` (weekly). Kept for callers that mean calendar-day. */
-export function isQuoteLatestToday(
-  updatedAt: string | null | undefined,
-  now = new Date(),
-): boolean {
-  if (!updatedAt) return false;
-  const t = Date.parse(updatedAt);
-  if (!Number.isFinite(t)) return false;
-  const d = new Date(t);
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
-}
-
 /** Has a real Steam store hist low (ITAD) for the active country. */
 export function quoteHasStoreLow(
   quote: Pick<GamePriceQuote, "lowestInr"> | null | undefined,
 ): boolean {
   return quote != null && quote.lowestInr != null && quote.lowestInr > 0;
 }
-
-/** @deprecated Prefer quoteHasStoreLow */
-export const quoteHasIndiaLow = quoteHasStoreLow;
 
 /**
  * Quote is “fresh” for the weekly bar: ITAD was checked within 7 days
@@ -232,9 +223,6 @@ export function isQuoteLatestStoreLow(
     quote.itadCheckedAt || (quoteHasStoreLow(quote) ? quote.updatedAt : null);
   return isWithinTtl(stamp, PRICE_CACHE_TTL_MS, now.getTime());
 }
-
-/** @deprecated Prefer isQuoteLatestStoreLow */
-export const isQuoteLatestIndiaLow = isQuoteLatestStoreLow;
 
 /** How many library titles have a fresh (≤7 day) ITAD check stored. */
 export function countLatestQuotes(
@@ -302,9 +290,6 @@ export function isStoreLowsWeekFresh(
   const { latest, total } = countLatestQuotes(titles, cache, now);
   return total > 0 && latest >= total;
 }
-
-/** @deprecated Prefer isStoreLowsWeekFresh */
-export const isIndiaLowsWeekFresh = isStoreLowsWeekFresh;
 
 export function priceCacheAgeMs(
   cache: Pick<PriceCache, "updatedAt">,
@@ -669,9 +654,6 @@ async function itadBulkSteamStorePrices(itadIds: string[]): Promise<
   return out;
 }
 
-/** @deprecated */
-const itadBulkSteamIndiaPrices = itadBulkSteamStorePrices;
-
 function softRelatedQuote(
   key: string,
   q: GamePriceQuote,
@@ -984,9 +966,6 @@ async function enrichWithItadStoreLows(
   backfillEditionLowsFromRelated(cache);
   await backfillUnlistedFromAvailableEditions(cache, titles);
 }
-
-/** @deprecated */
-const enrichWithItadIndiaLows = enrichWithItadStoreLows;
 
 function unresolvedQuote(
   title: string,

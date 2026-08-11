@@ -9,7 +9,6 @@ import {
   type AccountSpendRow,
   type LicenseRow,
   type LoginHistoryRow,
-  type MachineAuthName,
   type PlayedGame,
   type PurchaseHistoryRow,
 } from "@/lib/account-data";
@@ -24,8 +23,8 @@ export type LocalAccountBundle = {
   licenses: LicenseRow[];
   accountSpend: AccountSpendRow[];
   loginHistory: LoginHistoryRow[];
-  machineNames: MachineAuthName[];
   playedGames: PlayedGame[];
+  playedFetchedAt: string | null;
   steamId: string | null;
   source: "parsed-json" | "raw-html";
 };
@@ -52,14 +51,18 @@ function hydratePlayedGames(games: PlayedGame[]): PlayedGame[] {
 async function loadPlayedGames(): Promise<{
   games: PlayedGame[];
   steamId: string | null;
+  fetchedAt: string | null;
 }> {
-  const parsed = await readJsonIfExists<{ games: PlayedGame[]; steamId?: string }>(
-    path.join(PARSED_DIR, "games-played.json"),
-  );
+  const parsed = await readJsonIfExists<{
+    games: PlayedGame[];
+    steamId?: string;
+    fetchedAt?: string;
+  }>(path.join(PARSED_DIR, "games-played.json"));
   if (parsed?.games?.length) {
     return {
       games: hydratePlayedGames(parsed.games),
       steamId: parsed.steamId ?? null,
+      fetchedAt: parsed.fetchedAt ?? null,
     };
   }
 
@@ -68,9 +71,10 @@ async function loadPlayedGames(): Promise<{
     return {
       games: hydratePlayedGames(parseGamesPlayedHtml(html)),
       steamId: extractSteamIdFromGamesHtml(html),
+      fetchedAt: null,
     };
   } catch {
-    return { games: [], steamId: null };
+    return { games: [], steamId: null, fetchedAt: null };
   }
 }
 
@@ -90,9 +94,6 @@ async function loadFromParsed(): Promise<LocalAccountBundle | null> {
   const loginFile = await readJsonIfExists<{ rows: LoginHistoryRow[] }>(
     path.join(PARSED_DIR, "login-history.json"),
   );
-  const machineFile = await readJsonIfExists<{ rows: MachineAuthName[] }>(
-    path.join(PARSED_DIR, "machine-auth-names.json"),
-  );
   const played = await loadPlayedGames();
 
   return {
@@ -100,8 +101,8 @@ async function loadFromParsed(): Promise<LocalAccountBundle | null> {
     licenses: licensesFile?.rows ?? [],
     accountSpend: spendFile?.rows ?? [],
     loginHistory: loginFile?.rows ?? [],
-    machineNames: machineFile?.rows ?? [],
     playedGames: played.games,
+    playedFetchedAt: played.fetchedAt,
     steamId: played.steamId,
     source: "parsed-json",
   };
@@ -113,7 +114,6 @@ async function loadFromRawHtml(): Promise<LocalAccountBundle | null> {
     licenses: "licenses.html",
     accountSpend: "account-spend.html",
     loginHistory: "login-history.html",
-    machineNames: "machine-auth-names.html",
   };
 
   try {
@@ -147,11 +147,8 @@ async function loadFromRawHtml(): Promise<LocalAccountBundle | null> {
         map.loginHistory,
         "login-history",
       )) as LoginHistoryRow[],
-      machineNames: (await parseKind(
-        map.machineNames,
-        "machine-auth-names",
-      )) as MachineAuthName[],
       playedGames: played.games,
+      playedFetchedAt: played.fetchedAt,
       steamId: played.steamId,
       source: "raw-html",
     };

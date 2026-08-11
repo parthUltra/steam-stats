@@ -1,12 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCwIcon } from "lucide-react";
 import { DashboardView } from "@/components/DashboardView";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+
+export type LowsProgress = {
+  latest: number;
+  total: number;
+  running: boolean;
+};
 
 async function fetchDashboard(): Promise<DashboardPayload> {
   const res = await fetch("/api/dashboard", { cache: "no-store" });
@@ -25,6 +31,9 @@ export function DashboardClient({
   const [data, setData] = useState<DashboardPayload | null>(initialData);
   const [error, setError] = useState<string | null>(initialError);
   const [loading, setLoading] = useState(!initialData && !initialError);
+  const [lowsProgress, setLowsProgress] = useState<LowsProgress | null>(null);
+  const runningRef = useRef(false);
+  const pollRef = useRef<number | null>(null);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
@@ -41,7 +50,75 @@ export function DashboardClient({
     }
   }, []);
 
+  const stopPoll = useCallback(() => {
+    if (pollRef.current != null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const pollStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/refresh-prices");
+      const body = (await res.json()) as {
+        latest?: number;
+        total?: number;
+        running?: boolean;
+      };
+      const running = Boolean(body.running);
+      const latest = body.latest ?? 0;
+      const total = body.total ?? 0;
+      if (total > 0) setLowsProgress({ latest, total, running });
+      if (runningRef.current && !running) {
+        runningRef.current = false;
+        stopPoll();
+        void load({ silent: true });
+        return;
+      }
+      if (running) runningRef.current = true;
+    } catch {
+      // ignore
+    }
+  }, [load, stopPoll]);
+
+  const startPoll = useCallback(() => {
+    if (pollRef.current != null) return;
+    pollRef.current = window.setInterval(() => {
+      void pollStatus();
+    }, 4000);
+  }, [pollStatus]);
+
+  const refreshLows = useCallback(
+    async (opts?: { force?: boolean }) => {
+      try {
+        const res = await fetch("/api/refresh-prices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ force: Boolean(opts?.force) }),
+        });
+        const body = (await res.json()) as {
+          latest?: number;
+          total?: number;
+          started?: boolean;
+          alreadyRunning?: boolean;
+        };
+        const latest = body.latest ?? 0;
+        const total = body.total ?? 0;
+        const running = Boolean(body.started || body.alreadyRunning);
+        if (total > 0) setLowsProgress({ latest, total, running });
+        if (running) {
+          runningRef.current = true;
+          startPoll();
+        }
+      } catch {
+        // bar still shows last known coverage
+      }
+    },
+    [startPoll],
+  );
+
   useEffect(() => {
+    if (initialData) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -59,37 +136,25 @@ export function DashboardClient({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialData]);
 
-  // Weekly store lows: start a one-shot refresh only if stored data is stale (>7 days)
   useEffect(() => {
-    void fetch("/api/refresh-prices", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    }).catch(() => undefined);
-  }, []);
+    void (async () => {
+      await refreshLows();
+      await pollStatus();
+      if (runningRef.current) startPoll();
+    })();
+    return () => stopPoll();
+  }, [pollStatus, refreshLows, startPoll, stopPoll]);
 
-  // Dev: refresh data when files change (HMR) or the tab is focused.
-  // Also poll slowly so background price updates show up without a hard reload.
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
-
     const onDevRefresh = () => {
       void load({ silent: true });
     };
-    const onFocus = () => {
-      void load({ silent: true });
-    };
     window.addEventListener("steam-stats:dev-refresh", onDevRefresh);
-    window.addEventListener("focus", onFocus);
-    const id = window.setInterval(() => {
-      void load({ silent: true });
-    }, 8_000);
     return () => {
       window.removeEventListener("steam-stats:dev-refresh", onDevRefresh);
-      window.removeEventListener("focus", onFocus);
-      window.clearInterval(id);
     };
   }, [load]);
 
@@ -99,12 +164,12 @@ export function DashboardClient({
 
   if (loading && !data) {
     return (
-      <div className="flex flex-col gap-4 py-10">
+      <div className="flex flex-col gap-4 py-10" aria-busy="true">
         <Skeleton className="h-16 w-full rounded-xl" />
         <Skeleton className="h-48 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
         <p className="text-center text-sm text-muted-foreground">
-          Loading Account Data & market quotes…
+          Loading library &amp; quotes…
         </p>
       </div>
     );
@@ -117,14 +182,7 @@ export function DashboardClient({
         <AlertDescription className="flex flex-col gap-3">
           <span>{error}</span>
           <span className="text-muted-foreground">
-            Run{" "}
-            <code className="font-mono text-primary">
-              npm run fetch:account-data
-            </code>{" "}
-            then{" "}
-            <code className="font-mono text-primary">
-              npm run parse:account-data
-            </code>
+            Refresh Steam data from the launch script, then retry.
           </span>
           <Button
             type="button"
@@ -142,5 +200,12 @@ export function DashboardClient({
 
   if (!data) return null;
 
-  return <DashboardView data={data} onRefresh={retry} />;
+  return (
+    <DashboardView
+      data={data}
+      onRefresh={retry}
+      lowsProgress={lowsProgress}
+      onRefreshLows={refreshLows}
+    />
+  );
 }

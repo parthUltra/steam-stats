@@ -64,11 +64,15 @@ function mergeGift(
   existing: ReceivedGiftRecord[],
   next: ParsedGiftEmail,
 ): ReceivedGiftRecord[] {
-  const idx = existing.findIndex(
-    (g) =>
-      normTitle(g.title) === normTitle(next.title) ||
-      titlesSoftMatch(g.title, next.title),
-  );
+  const idx = existing.findIndex((g) => {
+    if (next.giftUrl && g.giftUrl && next.giftUrl === g.giftUrl) return true;
+    if (normTitle(g.title) === normTitle(next.title)) return true;
+    // Soft-match only when we can't key by gift URL (avoid cross-wiring senders)
+    if ((!next.giftUrl || !g.giftUrl) && titlesSoftMatch(g.title, next.title)) {
+      return true;
+    }
+    return false;
+  });
   const row: ReceivedGiftRecord = {
     title: next.title,
     fromPersona: next.fromPersona,
@@ -85,7 +89,11 @@ function mergeGift(
     copy[idx] = {
       ...prev,
       ...row,
-      title: prev.title || row.title,
+      title:
+        row.title.length >= (prev.title?.length ?? 0)
+          ? row.title
+          : prev.title || row.title,
+      // Fresh parse wins when it knows the sender (fixes prior wrong stamps)
       fromPersona: row.fromPersona || prev.fromPersona,
       giftUrl: row.giftUrl || prev.giftUrl,
       receivedAt: row.receivedAt || prev.receivedAt,

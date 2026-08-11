@@ -422,10 +422,3 @@ export async function connectUserBrowser(
   };
 }
 
-/** @deprecated use connectUserBrowser */
-export async function connectUserChrome(
-  opts: ConnectUserBrowserOptions,
-): Promise<{ browser: Browser; page: Page }> {
-  const { browser, page } = await connectUserBrowser(opts);
-  return { browser, page };
-}

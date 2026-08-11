@@ -35,11 +35,36 @@ function decodeEmailBody(raw: string): string {
   return text;
 }
 
+/**
+ * Split a scrape / mbox blob into one message per gift email.
+ *
+ * Prefer our sync separator (`----`). Never split on bare `From Name` lines inside
+ * Steam gift notes (e.g. "From Abhi, Arbaaz…") — that used to merge many gifts
+ * into one chunk and stamp the first sender onto the rest.
+ */
+export function splitGiftEmailChunks(raw: string): string[] {
+  const text = raw.replace(/\0/g, "");
+  if (text.includes("\n----\n")) {
+    return text
+      .split(/\n----\n/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+  }
+  // Real mbox envelope lines look like: From someone@host ...
+  if (/^From \S+@/m.test(text) || /\nFrom \S+@/.test(text)) {
+    return text
+      .split(/\n(?=From \S+@)/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+  }
+  return [text.trim()].filter(Boolean);
+}
+
 function cleanTitle(raw: string): string | null {
   let t = raw
     .replace(/\s+/g, " ")
     .replace(/^["'`]+|["'`]+$/g, "")
-    .replace(/\s*[.!]+\s*$/, "")
+    .replace(/\s*\.+$/g, "")
     .trim();
   // Steam subjects often insert "the game" before the title
   t = t.replace(/^(?:the\s+)?game\s+/i, "").trim();
@@ -63,6 +88,12 @@ function cleanTitle(raw: string): string | null {
   return t;
 }
 
+function sourceRank(source: ParsedGiftEmail["source"]): number {
+  if (source === "body") return 3;
+  if (source === "link") return 2;
+  return 1;
+}
+
 function pushUnique(
   out: ParsedGiftEmail[],
   title: string,
@@ -76,23 +107,36 @@ function pushUnique(
       normTitle(g.title) === key || titlesSoftMatch(g.title, cleaned),
   );
   if (existing) {
-    // Prefer richer metadata from body / later matches
-    if (!existing.fromPersona && meta.fromPersona) {
-      existing.fromPersona = meta.fromPersona;
+    const preferMeta = sourceRank(meta.source) >= sourceRank(existing.source);
+
+    // Body (or equal/better) may correct a wrong persona from a subject stub.
+    if (meta.fromPersona) {
+      if (!existing.fromPersona || preferMeta) {
+        existing.fromPersona = meta.fromPersona;
+      }
     }
-    if (!existing.giftUrl && meta.giftUrl) existing.giftUrl = meta.giftUrl;
-    if (!existing.receivedAt && meta.receivedAt) {
+    if (meta.giftUrl && (!existing.giftUrl || preferMeta)) {
+      existing.giftUrl = meta.giftUrl;
+    }
+    if (meta.receivedAt && (!existing.receivedAt || preferMeta)) {
       existing.receivedAt = meta.receivedAt;
     }
+    if (meta.subject && (!existing.subject || preferMeta)) {
+      existing.subject = meta.subject;
+    }
+    if (meta.sender && (!existing.sender || preferMeta)) {
+      existing.sender = meta.sender;
+    }
+
     // Replace junk / truncated titles with a better capture
     const existingJunk =
       /gift subscription|gift copy of/i.test(existing.title) ||
       existing.title.length < cleaned.length;
     if (
-      (meta.source === "body" && existing.source !== "body") ||
+      preferMeta ||
       (existingJunk && !/gift subscription|gift copy of/i.test(cleaned))
     ) {
-      existing.source = meta.source === "body" ? "body" : existing.source;
+      existing.source = preferMeta ? meta.source : existing.source;
       existing.title = cleaned;
     }
     return;
@@ -115,6 +159,26 @@ function extractDateHeader(decoded: string): string | undefined {
   return new Date(t).toISOString();
 }
 
+/** Map each gift title in this message to the persona in its own sentence. */
+function personasByTitleInChunk(decoded: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const patterns = [
+    /your friend\s+(.+?)\s+has given you\s+a gift subscription to(?:\s+the game)?\s+([\s\S]+?)\s+on Steam/gi,
+    /your friend\s+(.+?)\s+has given you\s+(?!a gift subscription)([\s\S]+?)\s+on Steam/gi,
+  ];
+  for (const re of patterns) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(decoded)) !== null) {
+      const persona = m[1]?.replace(/\s+/g, " ").trim();
+      const title = cleanTitle(m[2].replace(/\s+/g, " ").trim());
+      if (!persona || !title) continue;
+      map.set(normTitle(title), persona);
+    }
+  }
+  return map;
+}
+
 /**
  * Extract gift game titles from Steam gift notification email text / .eml.
  *
@@ -126,17 +190,9 @@ function extractDateHeader(decoded: string): string | undefined {
  *   Link:    https://store.steampowered.com/account/ackgift/…
  */
 export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
-  const raw = rawInput.replace(/\0/g, "");
   const out: ParsedGiftEmail[] = [];
 
-  // Split mbox-ish concatenations / sync blobs
-  const chunks = raw.includes("\nFrom ")
-    ? raw.split(/\n(?=From )/)
-    : raw.includes("\n----\n")
-      ? raw.split(/\n----\n/)
-      : [raw];
-
-  for (const chunk of chunks) {
+  for (const chunk of splitGiftEmailChunks(rawInput)) {
     const decoded = decodeEmailBody(chunk);
     const subjectMatch = decoded.match(/^Subject:\s*(.+)$/im);
     const subject = subjectMatch?.[1]?.replace(/\s+/g, " ").trim();
@@ -147,6 +203,7 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
       .trim();
     const giftUrl = extractGiftUrl(decoded);
     const receivedAt = extractDateHeader(decoded);
+    const personasByTitle = personasByTitleInChunk(decoded);
     const baseMeta = {
       subject,
       sender: from,
@@ -154,13 +211,16 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
       receivedAt,
     };
 
-    const chunkStart = out.length;
-
-    // Persona is often present even when the title wraps to the next line.
-    const friendMatch = decoded.match(
-      /your friend\s+(.+?)\s+has given you/i,
-    );
-    const personaFromBody = friendMatch?.[1]?.replace(/\s+/g, " ").trim();
+    const personaForTitle = (title: string): string | undefined => {
+      const cleaned = cleanTitle(title);
+      if (!cleaned) return undefined;
+      const exact = personasByTitle.get(normTitle(cleaned));
+      if (exact) return exact;
+      for (const [key, persona] of personasByTitle) {
+        if (titlesSoftMatch(key, cleaned)) return persona;
+      }
+      return undefined;
+    };
 
     if (subject) {
       const subPatterns = [
@@ -174,9 +234,10 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
       for (const re of subPatterns) {
         const m = subject.match(re);
         if (m?.[1]) {
+          // Subject-only stubs must not inherit another gift's sender.
           pushUnique(out, m[1], {
             ...baseMeta,
-            fromPersona: personaFromBody,
+            fromPersona: personaForTitle(m[1]),
             source: "subject",
           });
           break;
@@ -194,9 +255,11 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
       givenRe.lastIndex = 0;
       let gm: RegExpExecArray | null;
       while ((gm = givenRe.exec(decoded)) !== null) {
-        const persona =
-          gm[1]?.replace(/\s+/g, " ").trim() || personaFromBody || undefined;
         const title = gm[2].replace(/\s+/g, " ").trim();
+        const persona =
+          gm[1]?.replace(/\s+/g, " ").trim() ||
+          personaForTitle(title) ||
+          undefined;
         pushUnique(out, title, {
           ...baseMeta,
           fromPersona: persona,
@@ -217,7 +280,7 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
       while ((m = re.exec(decoded)) !== null) {
         pushUnique(out, m[1], {
           ...baseMeta,
-          fromPersona: personaFromBody,
+          fromPersona: personaForTitle(m[1]),
           source: "body",
         });
       }
@@ -237,16 +300,9 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
       ) {
         pushUnique(out, fromSlug, {
           ...baseMeta,
-          fromPersona: personaFromBody,
+          fromPersona: personaForTitle(fromSlug),
           source: "link",
         });
-      }
-    }
-
-    // Any titles from this email that still lack a sender get the body persona.
-    if (personaFromBody) {
-      for (let i = chunkStart; i < out.length; i++) {
-        if (!out[i].fromPersona) out[i].fromPersona = personaFromBody;
       }
     }
   }

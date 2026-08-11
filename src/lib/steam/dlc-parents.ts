@@ -125,39 +125,3 @@ export async function resolveDlcParents(
   }
   return out;
 }
-
-/**
- * Fallback when store lookup misses: title starts with another library
- * title + ":" / " - " (e.g. "Cyberpunk 2077: Phantom Liberty").
- */
-export function inferParentByTitle(
-  title: string,
-  candidates: { title: string; steamAppId: number | null }[],
-): number | null {
-  const key = title
-    .toLowerCase()
-    .replace(/™|®/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  let best: { appId: number; len: number } | null = null;
-  for (const c of candidates) {
-    if (c.steamAppId == null) continue;
-    const p = c.title
-      .toLowerCase()
-      .replace(/™|®/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (p.length < 4 || p === key) continue;
-    if (
-      key.startsWith(`${p}:`) ||
-      key.startsWith(`${p} -`) ||
-      key.startsWith(`${p} –`)
-    ) {
-      if (!best || p.length > best.len) {
-        best = { appId: c.steamAppId, len: p.length };
-      }
-    }
-  }
-  return best?.appId ?? null;
-}
