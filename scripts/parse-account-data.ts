@@ -12,64 +12,78 @@ import {
 import {
   parseGamesPlayedHtml,
   extractSteamIdFromGamesHtml,
+  mergePlayedGames,
+  type PlayedGame,
 } from "../src/lib/account-data/games-playtime";
 
 const SAMPLES_DIR = path.resolve(__dirname, "..", "samples", "account-data");
 const OUT_DIR = path.resolve(__dirname, "..", "samples", "parsed");
+
+type GamesPlayedFile = {
+  steamId?: string | null;
+  source?: string;
+  fetchedAt?: string;
+  games?: PlayedGame[];
+};
 
 async function main() {
   await fs.mkdir(OUT_DIR, { recursive: true });
   const files = (await fs.readdir(SAMPLES_DIR)).filter((f) => f.endsWith(".html"));
 
   const summary: Record<string, unknown> = {};
+  const gamesHtmlFiles = files.filter(
+    (f) => f === "games-all.html" || f === "games-recent.html",
+  );
+  const otherFiles = files.filter(
+    (f) => f !== "games-all.html" && f !== "games-recent.html",
+  );
 
-  for (const file of files.sort()) {
-    const html = await fs.readFile(path.join(SAMPLES_DIR, file), "utf8");
-
-    if (file === "games-all.html" || file === "games-recent.html") {
-      if (file !== "games-all.html") {
-        console.log(`${file}: skipped (use games-all for playtime)`);
-        continue;
-      }
-      const games = parseGamesPlayedHtml(html);
-      const steamId = extractSteamIdFromGamesHtml(html);
-      const existingPath = path.join(OUT_DIR, "games-played.json");
-      let existingCount = 0;
-      try {
-        const prev = JSON.parse(await fs.readFile(existingPath, "utf8")) as {
-          games?: unknown[];
-        };
-        existingCount = prev.games?.length ?? 0;
-      } catch {
-        // none
-      }
-      // Don't clobber a fuller Steam API / session library with HTML's ~25 cards
-      if (existingCount > games.length) {
-        console.log(
-          `${file}: HTML has ${games.length} games; keeping existing games-played.json (${existingCount}). Run npm run fetch:owned-games to refresh full library.`,
-        );
-        summary[file] = {
-          kind: "games-played",
-          gameCount: existingCount,
-          steamId,
-          keptExisting: true,
-        };
-        continue;
-      }
-      const payload = { steamId, games, source: "account-data-html" };
-      await fs.writeFile(existingPath, JSON.stringify(payload, null, 2), "utf8");
-      const totalHours = games.reduce((s, g) => s + g.hoursForever, 0);
-      summary[file] = {
-        kind: "games-played",
-        gameCount: games.length,
-        totalHours,
-        steamId,
-      };
-      console.log(
-        `${file}: games-played ${games.length} games · ${totalHours.toFixed(1)}h · steamId=${steamId}`,
-      );
-      continue;
+  if (gamesHtmlFiles.length) {
+    const existingPath = path.join(OUT_DIR, "games-played.json");
+    let existing: GamesPlayedFile = {};
+    try {
+      existing = JSON.parse(await fs.readFile(existingPath, "utf8")) as GamesPlayedFile;
+    } catch {
+      // none
     }
+
+    let merged = existing.games ?? [];
+    let steamId = existing.steamId ?? null;
+    const fromHtml: PlayedGame[] = [];
+
+    for (const file of ["games-all.html", "games-recent.html"]) {
+      if (!gamesHtmlFiles.includes(file)) continue;
+      const html = await fs.readFile(path.join(SAMPLES_DIR, file), "utf8");
+      const games = parseGamesPlayedHtml(html);
+      steamId = extractSteamIdFromGamesHtml(html) ?? steamId;
+      fromHtml.push(...games);
+      console.log(`${file}: parsed ${games.length} games for playtime merge`);
+      summary[file] = { kind: "games-played", gameCount: games.length, steamId };
+    }
+
+    merged = mergePlayedGames(merged, fromHtml);
+    const source =
+      (existing.games?.length ?? 0) > fromHtml.length
+        ? existing.source === "account-data-html"
+          ? "merged"
+          : existing.source ?? "merged"
+        : "account-data-html";
+    const payload = {
+      steamId,
+      source,
+      fetchedAt: new Date().toISOString(),
+      games: merged,
+    };
+    await fs.writeFile(existingPath, JSON.stringify(payload, null, 2), "utf8");
+    const totalHours = merged.reduce((s, g) => s + g.hoursForever, 0);
+    const withRecent = merged.filter((g) => (g.lastPlayedAt ?? 0) > 0).length;
+    console.log(
+      `games-played: ${merged.length} games · ${totalHours.toFixed(1)}h · ${withRecent} with last-played · steamId=${steamId}`,
+    );
+  }
+
+  for (const file of otherFiles.sort()) {
+    const html = await fs.readFile(path.join(SAMPLES_DIR, file), "utf8");
 
     const result = parseAccountDataHtml(html);
     const outName = file.replace(/\.html$/, ".json");

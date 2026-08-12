@@ -1,4 +1,3 @@
-import * as cheerio from "cheerio";
 import { parse } from "date-fns";
 
 export type PlayedGame = {
@@ -15,6 +14,9 @@ export type PlayedGame = {
   minutesForever: number | null;
   /** Played via Steam Family Library (not permanently owned) */
   fromFamily?: boolean;
+  /** License acquisition date (for unplayed / recently added shelf rows) */
+  addedAt?: number | null;
+  addedText?: string | null;
 };
 
 /** Parse Steam “LAST PLAYED” labels like "2 Aug", "14 Jul", "26 May 2025". */
@@ -51,9 +53,58 @@ function decodeJsString(value: string): string {
   }
 }
 
+/** Parse "2.3 hours" / "37 minutes" labels into hours. */
+function parsePlayedDurationLabel(text: string | null | undefined): number | null {
+  if (!text) return null;
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  const hours = cleaned.match(/^([\d,.]+)\s*hours?$/i);
+  if (hours) return Number(hours[1].replace(/,/g, ""));
+  const minutes = cleaned.match(/^([\d,.]+)\s*minutes?$/i);
+  if (minutes) return Number(minutes[1].replace(/,/g, "")) / 60;
+  return null;
+}
+
+/** Merge playtime rows; prefer newer last-played and higher hours. */
+export function mergePlayedGames(
+  base: PlayedGame[],
+  incoming: PlayedGame[],
+): PlayedGame[] {
+  const byId = new Map<number, PlayedGame>();
+  for (const g of base) byId.set(g.appId, g);
+  for (const g of incoming) {
+    const prev = byId.get(g.appId);
+    if (!prev) {
+      byId.set(g.appId, g);
+      continue;
+    }
+    const lastPlayedAt =
+      Math.max(prev.lastPlayedAt ?? 0, g.lastPlayedAt ?? 0) ||
+      prev.lastPlayedAt ||
+      g.lastPlayedAt;
+    const preferIncomingLast =
+      (g.lastPlayedAt ?? 0) >= (prev.lastPlayedAt ?? 0) &&
+      (g.lastPlayedAt ?? 0) > 0;
+    byId.set(g.appId, {
+      ...prev,
+      name: prev.name || g.name,
+      hoursForever: Math.max(prev.hoursForever, g.hoursForever),
+      hours2Weeks: g.hours2Weeks ?? prev.hours2Weeks,
+      minutesForever: Math.max(
+        prev.minutesForever ?? 0,
+        g.minutesForever ?? 0,
+      ),
+      lastPlayedAt,
+      lastPlayedText: preferIncomingLast
+        ? g.lastPlayedText ?? prev.lastPlayedText
+        : prev.lastPlayedText ?? g.lastPlayedText,
+      fromFamily: Boolean(prev.fromFamily && g.fromFamily),
+    });
+  }
+  return [...byId.values()].sort((a, b) => b.hoursForever - a.hoursForever);
+}
+
 /** Parse community games page HTML (TOTAL PLAYED / LAST PLAYED cards). */
 export function parseGamesPlayedHtml(html: string): PlayedGame[] {
-  const $ = cheerio.load(html);
   const byId = new Map<number, PlayedGame>();
 
   // Primary: visible card links with TOTAL PLAYED nearby in raw HTML
@@ -64,11 +115,15 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
     const appId = Number(match[1]);
     const name = match[2].replace(/\s+/g, " ").trim();
     const chunk = html.slice(match.index, match.index + 1200);
-    const hoursMatch = chunk.match(/TOTAL PLAYED<\/span>\s*([\d,.]+)\s*hours?/i);
+    const hoursMatch = chunk.match(
+      /TOTAL PLAYED<\/span>\s*((?:[\d,.]+\s*(?:hours?|minutes?)))/i,
+    );
     const lastMatch = chunk.match(/LAST PLAYED<\/span>\s*([^<]+)/i);
-    const hoursForever = hoursMatch
-      ? Number(hoursMatch[1].replace(/,/g, ""))
-      : 0;
+    const twoWeeksMatch = chunk.match(
+      /LAST TWO WEEKS<\/span>\s*((?:[\d,.]+\s*(?:hours?|minutes?)))/i,
+    );
+    const hoursForever = parsePlayedDurationLabel(hoursMatch?.[1]) ?? 0;
+    const hours2Weeks = parsePlayedDurationLabel(twoWeeksMatch?.[1]);
     const lastPlayedText = lastMatch
       ? lastMatch[1].replace(/\s+/g, " ").trim()
       : null;
@@ -79,22 +134,25 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
         appId,
         name,
         hoursForever,
-        hours2Weeks: null,
+        hours2Weeks,
         lastPlayedText,
         lastPlayedAt: parseLastPlayedAt(lastPlayedText),
         minutesForever: Math.round(hoursForever * 60),
       });
+    } else if (existing && hours2Weeks != null && existing.hours2Weeks == null) {
+      byId.set(appId, { ...existing, hours2Weeks });
     }
   }
 
-  // Enrich / add from escaped SSR JSON (recently played often has minutes)
+  // Enrich / add from escaped SSR JSON.
+  // Steam puts playtime_2weeks + rtime_last_played *after* playtime_forever.
   const jsonRe =
-    /\\"appid\\":(\d+),\\"name\\":\\"([^\\"]+)\\"([\s\S]{0,400}?)\\"playtime_forever\\":(\d+)/g;
+    /\\"appid\\":(\d+),\\"name\\":\\"((?:\\\\.|[^\\"])*)\\",\\"playtime_forever\\":(\d+)((?:(?!\\"appid\\":).){0,400})/g;
   while ((match = jsonRe.exec(html)) !== null) {
     const appId = Number(match[1]);
     const name = decodeJsString(match[2]);
-    const tail = match[3] ?? "";
-    const minutesForever = Number(match[4]);
+    const minutesForever = Number(match[3]);
+    const tail = match[4] ?? "";
     const twoWeeksMatch = tail.match(/\\"playtime_2weeks\\":(\d+)/);
     const rtimeMatch = tail.match(/\\"rtime_last_played\\":(\d+)/);
     const hoursForever = minutesForever / 60;
@@ -118,14 +176,20 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
         minutesForever,
       });
     } else {
+      const nextLast =
+        Math.max(existing.lastPlayedAt ?? 0, lastPlayedAt ?? 0) ||
+        existing.lastPlayedAt;
+      const preferJsonLast =
+        (lastPlayedAt ?? 0) >= (existing.lastPlayedAt ?? 0) &&
+        (lastPlayedAt ?? 0) > 0;
       byId.set(appId, {
         ...existing,
         hoursForever: Math.max(existing.hoursForever, hoursForever),
         hours2Weeks: hours2Weeks ?? existing.hours2Weeks,
-        lastPlayedAt: Math.max(
-          existing.lastPlayedAt ?? 0,
-          lastPlayedAt ?? 0,
-        ) || existing.lastPlayedAt,
+        lastPlayedAt: nextLast,
+        lastPlayedText: preferJsonLast
+          ? new Date(lastPlayedAt!).toLocaleDateString()
+          : existing.lastPlayedText,
         minutesForever: Math.max(
           existing.minutesForever ?? 0,
           minutesForever,
@@ -176,4 +240,87 @@ export function buildPlaytimeAnalytics(
     games: [...games].sort((a, b) => b.hoursForever - a.hoursForever),
     source: opts?.source ?? "account-data-html",
   };
+}
+
+function compactTitleKey(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/™|®/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function libraryTitlesMatch(a: string, b: string): boolean {
+  const na = a.toLowerCase().replace(/™|®/g, "").replace(/\s+/g, " ").trim();
+  const nb = b.toLowerCase().replace(/™|®/g, "").replace(/\s+/g, " ").trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const ca = compactTitleKey(a);
+  const cb = compactTitleKey(b);
+  return ca.length >= 4 && ca === cb;
+}
+
+export type OwnedLicenseHint = {
+  item: string;
+  dateText: string;
+  addedAt: number | null;
+};
+
+/**
+ * Attach license added-dates to played games and add owned titles that have
+ * never been played (missing from GetOwnedGames / HTML playtime scrapes).
+ */
+export function augmentPlayedWithOwnedLicenses(
+  games: PlayedGame[],
+  licenses: OwnedLicenseHint[],
+  resolveAppId: (title: string) => number | null,
+): PlayedGame[] {
+  const byId = new Map<number, PlayedGame>();
+  for (const g of games) byId.set(g.appId, { ...g });
+
+  const findExisting = (title: string): PlayedGame | undefined => {
+    for (const g of byId.values()) {
+      if (libraryTitlesMatch(g.name, title)) return g;
+    }
+    return undefined;
+  };
+
+  for (const lic of licenses) {
+    const title = lic.item.trim();
+    if (!title) continue;
+    const existing = findExisting(title);
+    if (existing) {
+      const nextAdded =
+        Math.max(existing.addedAt ?? 0, lic.addedAt ?? 0) ||
+        existing.addedAt ||
+        lic.addedAt;
+      const preferLic =
+        (lic.addedAt ?? 0) >= (existing.addedAt ?? 0) && (lic.addedAt ?? 0) > 0;
+      byId.set(existing.appId, {
+        ...existing,
+        addedAt: nextAdded,
+        addedText: preferLic
+          ? lic.dateText || existing.addedText
+          : existing.addedText ?? lic.dateText,
+      });
+      continue;
+    }
+
+    const appId = resolveAppId(title);
+    if (appId == null || appId <= 0 || byId.has(appId)) continue;
+
+    byId.set(appId, {
+      appId,
+      name: title,
+      hoursForever: 0,
+      hours2Weeks: null,
+      lastPlayedText: null,
+      lastPlayedAt: null,
+      minutesForever: 0,
+      fromFamily: false,
+      addedAt: lic.addedAt,
+      addedText: lic.dateText || null,
+    });
+  }
+
+  return [...byId.values()].sort((a, b) => b.hoursForever - a.hoursForever);
 }

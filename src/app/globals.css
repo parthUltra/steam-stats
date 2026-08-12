@@ -483,7 +483,8 @@ h3,
     rgba(6, 10, 14, 0.88) 100%
   );
   pointer-events: none;
-  opacity: 1;
+  opacity: 0;
+  transition: opacity 0.18s ease;
 }
 
 .pano-tile:hover .pano-tile-shade,
@@ -500,6 +501,17 @@ h3,
   flex-direction: column;
   gap: 0.1rem;
   pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.pano-tile:hover .pano-tile-meta,
+.pano-tile:focus-visible .pano-tile-meta {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .pano-tile-hours {
@@ -508,8 +520,6 @@ h3,
   font-weight: 700;
   color: #3ee0d5;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
-  opacity: 1;
-  transform: none;
 }
 
 .pano-tile-name {
@@ -520,17 +530,7 @@ h3,
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  opacity: 1;
-  transform: none;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
-}
-
-.pano-tile:hover .pano-tile-hours,
-.pano-tile:hover .pano-tile-name,
-.pano-tile:focus-visible .pano-tile-hours,
-.pano-tile:focus-visible .pano-tile-name {
-  opacity: 1;
-  transform: none;
 }
 
 @media (max-width: 720px) {

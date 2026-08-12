@@ -13,7 +13,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test src/lib/gifts/parse-steam-gift-email.test.ts src/lib/analytics/acquisition.test.ts",
+    "test": "tsx --test src/lib/gifts/parse-steam-gift-email.test.ts src/lib/analytics/acquisition.test.ts src/lib/account-data/games-playtime.test.ts",
     "fetch:account-data": "tsx scripts/fetch-account-data.ts",
     "fetch:owned-games": "tsx scripts/fetch-owned-games.ts",
     "parse:account-data": "tsx scripts/parse-account-data.ts",

@@ -27,6 +27,9 @@ export {
   parseLastPlayedAt,
   extractSteamIdFromGamesHtml,
   buildPlaytimeAnalytics,
+  mergePlayedGames,
+  augmentPlayedWithOwnedLicenses,
   type PlayedGame,
   type PlaytimeAnalytics,
+  type OwnedLicenseHint,
 } from "./games-playtime";

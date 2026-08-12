@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type Ref } from "react";
+import { useEffect, useMemo, useState, type Ref } from "react";
 import { SearchIcon } from "lucide-react";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
 import { PlaytimePanorama } from "@/components/PlaytimePanorama";
@@ -21,6 +21,23 @@ import {
 } from "@/components/ui/toggle-group";
 
 export type LibraryView = "hours" | "recent" | "name" | "panorama";
+
+/** Under 30m counts as unplayed for the A–Z “try this” pick. */
+const UNPLAYED_HOURS = 0.5;
+
+function heroRoleLabel(view: LibraryView, searching: boolean): string {
+  if (searching) return "Top match";
+  switch (view) {
+    case "recent":
+      return "Most recent";
+    case "name":
+      return "Try this";
+    case "hours":
+      return "Most played";
+    case "panorama":
+      return "Panorama";
+  }
+}
 
 function GameCard({
   game,
@@ -72,6 +89,8 @@ function GameCard({
           </div>
           {game.lastPlayedText ? (
             <div className="game-card-last">Last {game.lastPlayedText}</div>
+          ) : game.addedText ? (
+            <div className="game-card-last">Added {game.addedText}</div>
           ) : null}
           <div className="game-card-bar" aria-hidden>
             <span style={{ ["--fill" as string]: pct / 100 }} />
@@ -81,6 +100,9 @@ function GameCard({
       <div className="game-card-name">{game.name}</div>
       <div className="game-card-tags">
         {game.fromFamily ? <Badge variant="secondary">Family</Badge> : null}
+        {game.hoursForever <= 0 ? (
+          <Badge variant="secondary">Unplayed</Badge>
+        ) : null}
         {game.hours2Weeks != null && game.hours2Weeks > 0 ? (
           <Badge variant="outline">
             {formatPlayHours(game.hours2Weeks)}h recent
@@ -174,7 +196,43 @@ export function GameLibrary({
     return list;
   }, [playtime.games, query, view]);
 
-  const featured = query.trim() ? filtered[0] : playtime.games[0];
+  const unplayedKey = useMemo(
+    () =>
+      playtime.games
+        .filter((g) => g.hoursForever < UNPLAYED_HOURS)
+        .map((g) => g.appId)
+        .sort((a, b) => a - b)
+        .join(","),
+    [playtime.games],
+  );
+
+  const [azTryAppId, setAzTryAppId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (view !== "name") return;
+    if (!unplayedKey) {
+      setAzTryAppId(null);
+      return;
+    }
+    const ids = unplayedKey.split(",").map(Number);
+    setAzTryAppId(ids[Math.floor(Math.random() * ids.length)]!);
+  }, [view, unplayedKey]);
+
+  const featured = useMemo(() => {
+    if (query.trim()) return filtered[0];
+    if (view === "name" && azTryAppId != null) {
+      return (
+        playtime.games.find((g) => g.appId === azTryAppId) ?? filtered[0]
+      );
+    }
+    return filtered[0];
+  }, [filtered, query, view, azTryAppId, playtime.games]);
+
+  const azTryPick =
+    view === "name" &&
+    !query.trim() &&
+    featured != null &&
+    featured.hoursForever < UNPLAYED_HOURS;
 
   return (
     <div className="flex flex-col gap-5">
@@ -245,7 +303,10 @@ export function GameLibrary({
       ) : null}
 
       {featured && view !== "panorama" && !emptyLibrary ? (
-        <section className="library-hero library-hero-compact">
+        <section
+          key={view}
+          className="library-hero library-hero-compact"
+        >
           <HeroBanner
             appId={featured.appId}
             artwork={artwork}
@@ -256,19 +317,34 @@ export function GameLibrary({
           <div className="library-hero-veil" />
           <div className="library-hero-content">
             <p className="library-hero-role">
-              {query.trim() ? "Top match" : "Most played"}
+              {heroRoleLabel(view, Boolean(query.trim()))}
             </p>
             <h3 className="library-hero-title">{featured.name}</h3>
             <div className="library-hero-featured-stat">
-              <span className="library-hero-stat-num">
-                {formatPlayHours(featured.hoursForever)}
-              </span>
-              <span className="library-hero-stat-label">hours on this title</span>
+              {azTryPick ? (
+                <>
+                  <span className="library-hero-stat-num">Unplayed</span>
+                  <span className="library-hero-stat-label">
+                    random pick from your shelf
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="library-hero-stat-num">
+                    {formatPlayHours(featured.hoursForever)}
+                  </span>
+                  <span className="library-hero-stat-label">
+                    hours on this title
+                  </span>
+                </>
+              )}
             </div>
             {featured.lastPlayedText ? (
               <p className="library-hero-last">
                 Last played {featured.lastPlayedText}
               </p>
+            ) : featured.addedText ? (
+              <p className="library-hero-last">Added {featured.addedText}</p>
             ) : null}
             <Button
               render={

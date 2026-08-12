@@ -2,11 +2,14 @@ import { loadLocalAccountData } from "@/lib/data/load-local";
 import {
   applySteamInrListPrices,
   buildSpendingAnalytics,
+  isOwnedLibraryLicense,
   libraryTitlesForValuation,
+  parseSteamDate,
 } from "@/lib/analytics/spending";
 import { buildLibraryValuation } from "@/lib/analytics/valuation";
 import { buildCostPerHourAnalytics } from "@/lib/analytics/cost-per-hour";
 import {
+  augmentPlayedWithOwnedLicenses,
   buildPlaytimeAnalytics,
   type PlayedGame,
 } from "@/lib/account-data";
@@ -55,11 +58,15 @@ function mergePlaytime(
       // API is authoritative for full library hours
       hoursForever: Math.max(prev.hoursForever, g.hoursForever),
       hours2Weeks: g.hours2Weeks ?? prev.hours2Weeks,
-      lastPlayedText: g.lastPlayedText ?? prev.lastPlayedText,
       lastPlayedAt:
         Math.max(prev.lastPlayedAt ?? 0, g.lastPlayedAt ?? 0) ||
         prev.lastPlayedAt ||
         g.lastPlayedAt,
+      lastPlayedText:
+        (g.lastPlayedAt ?? 0) >= (prev.lastPlayedAt ?? 0) &&
+        (g.lastPlayedAt ?? 0) > 0
+          ? g.lastPlayedText ?? prev.lastPlayedText
+          : prev.lastPlayedText ?? g.lastPlayedText,
       name: g.name || prev.name,
       fromFamily: Boolean(prev.fromFamily && g.fromFamily),
     });
@@ -145,13 +152,8 @@ export async function buildDashboard(options?: {
     bundle.steamId,
     bundle.playedFetchedAt,
   );
-  const playedGames = full.games;
+  let playedGames = full.games;
   const playtimeSource = full.source;
-
-  const playtime = buildPlaytimeAnalytics(playedGames, {
-    steamId: bundle.steamId,
-    source: playtimeSource,
-  });
 
   const libraryTitles = libraryTitlesForValuation(
     bundle.purchases,
@@ -199,6 +201,30 @@ export async function buildDashboard(options?: {
       limit: priceLimit,
     });
   }
+
+  // Owned licenses missing from playtime (never launched / API 401) still belong
+  // on the shelf — resolve app ids from price quotes + known playtime titles.
+  const idSourcesForOwned = [
+    ...playedGames.map((g) => ({ title: g.name, steamAppId: g.appId })),
+    ...Object.values(priceCache.quotes).map((q) => ({
+      title: q.title,
+      steamAppId: q.steamAppId,
+    })),
+  ];
+  playedGames = augmentPlayedWithOwnedLicenses(
+    playedGames,
+    bundle.licenses.filter(isOwnedLibraryLicense).map((lic) => ({
+      item: lic.item,
+      dateText: lic.dateText,
+      addedAt: parseSteamDate(lic.dateText)?.getTime() ?? null,
+    })),
+    (title) => resolveSteamAppId(title, idSourcesForOwned),
+  );
+
+  const playtime = buildPlaytimeAnalytics(playedGames, {
+    steamId: bundle.steamId,
+    source: playtimeSource,
+  });
 
   // Month-detail full prices: Steam store list for detected country
   applySteamInrListPrices(spending.monthly, priceCache.quotes);
