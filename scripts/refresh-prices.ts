@@ -10,7 +10,8 @@
  * Usage: npm run refresh:prices
  */
 import { loadLocalAccountData } from "../src/lib/data/load-local";
-import { libraryTitlesForValuation } from "../src/lib/analytics/spending";
+import { titlesForPriceRefresh } from "../src/lib/analytics/spending";
+import { loadReceivedGifts } from "../src/lib/gifts/received-store";
 import {
   countLatestQuotes,
   hasItadApiKey,
@@ -24,11 +25,19 @@ import { writePriceRefreshStatus } from "../src/lib/pricing/price-refresh-status
 
 async function main() {
   const bundle = await loadLocalAccountData();
-  const titles = libraryTitlesForValuation(bundle.purchases, bundle.licenses);
+  const received = await loadReceivedGifts();
+  const titles = titlesForPriceRefresh({
+    purchases: bundle.purchases,
+    licenses: bundle.licenses,
+    ownedTitles: bundle.playedGames
+      .filter((g) => !g.fromFamily)
+      .map((g) => g.name),
+    mailGiftTitles: received.gifts.map((g) => g.title),
+  });
   const { region } = await resolveAndApplyStoreRegion();
   const label = storeRegionLabel(region.country);
   console.log(
-    `Weekly ${label} (${region.country}/${region.currency}) lows for ${titles.length} library titles…`,
+    `Weekly ${label} (${region.country}/${region.currency}) lows for ${titles.length} titles (library + gifts)…`,
   );
 
   if (!(await hasItadApiKey())) {

@@ -491,3 +491,48 @@ export function libraryTitlesForValuation(
   }
   return [...titles];
 }
+
+function isPricedGiftTitle(name: string): boolean {
+  const t = name.trim();
+  if (!t) return false;
+  if (/gift card/i.test(t)) return false;
+  if (/^gift sent to\b/i.test(t)) return false;
+  return true;
+}
+
+/** Games you bought as gifts for others — not in your library, still need quotes. */
+export function giftSentTitlesFromPurchases(
+  purchases: PurchaseHistoryRow[],
+): string[] {
+  const titles = new Set<string>();
+  for (const row of purchases) {
+    if (!isGiftPurchase(row) || row.refunded) continue;
+    const names = row.lineItems?.length
+      ? row.lineItems.map((l) => l.name)
+      : row.items;
+    for (const name of names) {
+      if (isPricedGiftTitle(name)) titles.add(name.trim());
+    }
+  }
+  return [...titles];
+}
+
+/** Library + sent gifts + owned play + mail gifts — the set that must be priced. */
+export function titlesForPriceRefresh(input: {
+  purchases: PurchaseHistoryRow[];
+  licenses: LicenseRow[];
+  ownedTitles?: string[];
+  mailGiftTitles?: string[];
+}): string[] {
+  const titles = new Set<string>(
+    libraryTitlesForValuation(input.purchases, input.licenses),
+  );
+  for (const t of giftSentTitlesFromPurchases(input.purchases)) titles.add(t);
+  for (const t of input.ownedTitles ?? []) {
+    if (t.trim()) titles.add(t.trim());
+  }
+  for (const t of input.mailGiftTitles ?? []) {
+    if (t.trim()) titles.add(t.trim());
+  }
+  return [...titles];
+}

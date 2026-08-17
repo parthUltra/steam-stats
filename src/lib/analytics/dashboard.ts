@@ -3,8 +3,8 @@ import {
   applySteamInrListPrices,
   buildSpendingAnalytics,
   isOwnedLibraryLicense,
-  libraryTitlesForValuation,
   parseSteamDate,
+  titlesForPriceRefresh,
 } from "@/lib/analytics/spending";
 import { buildLibraryValuation } from "@/lib/analytics/valuation";
 import { buildCostPerHourAnalytics } from "@/lib/analytics/cost-per-hour";
@@ -155,22 +155,6 @@ export async function buildDashboard(options?: {
   let playedGames = full.games;
   const playtimeSource = full.source;
 
-  const libraryTitles = libraryTitlesForValuation(
-    bundle.purchases,
-    bundle.licenses,
-  );
-  // Price kept library + gifts you sent (sent only for the separate gifts section art/quotes)
-  // + owned playtime titles (catches gifts / keys missing from truncated licenses)
-  const giftSentTitles = bundle.purchases
-    .filter((p) => p.isGift && !p.refunded)
-    .flatMap((p) =>
-      (p.lineItems?.map((l) => l.name) ?? p.items).filter(
-        (n) => n && !/gift card/i.test(n),
-      ),
-    );
-  const ownedPlayTitles = playedGames
-    .filter((g) => !g.fromFamily)
-    .map((g) => g.name);
   const receivedStore = await loadReceivedGifts();
   const mailGiftTitles = receivedStore.gifts.map((g) => g.title);
   const mailGiftSenders = new Map<string, string>();
@@ -178,14 +162,12 @@ export async function buildDashboard(options?: {
     if (!g.fromPersona) continue;
     mailGiftSenders.set(normTitle(g.title), g.fromPersona);
   }
-  const titles = [
-    ...new Set([
-      ...libraryTitles,
-      ...giftSentTitles,
-      ...ownedPlayTitles,
-      ...mailGiftTitles,
-    ]),
-  ];
+  const titles = titlesForPriceRefresh({
+    purchases: bundle.purchases,
+    licenses: bundle.licenses,
+    ownedTitles: playedGames.filter((g) => !g.fromFamily).map((g) => g.name),
+    mailGiftTitles,
+  });
   let priceCache = await loadPriceCache();
   const { region, cache: regionCache } = await resolveAndApplyStoreRegion(
     priceCache,

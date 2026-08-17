@@ -78,6 +78,27 @@ async function waitForSteamLogin(page: Page) {
   throw new Error("Timed out waiting for Steam login.");
 }
 
+const HELP_TABLE_IDS = new Set(["account-spend", "login-history"]);
+
+async function waitOutHelpLogin(page: Page) {
+  const url = page.url();
+  if (!url.includes("/login") && !url.includes("need_password")) return;
+
+  console.log(
+    "  Steam Help wants your password for this page. Enter it in the browser window.",
+  );
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const now = page.url();
+    if (!now.includes("/login") && !now.includes("need_password")) {
+      await page.waitForTimeout(800);
+      return;
+    }
+    await page.waitForTimeout(1000);
+  }
+  console.warn("  Timed out waiting for Steam Help password.");
+}
+
 async function savePage(page: Page, id: string, url: string) {
   console.log(`Fetching ${id}: ${url}`);
   const response = await page.goto(url, {
@@ -85,6 +106,19 @@ async function savePage(page: Page, id: string, url: string) {
     timeout: 90_000,
   });
   await page.waitForTimeout(1500);
+  await waitOutHelpLogin(page);
+
+  if (HELP_TABLE_IDS.has(id)) {
+    try {
+      await page.waitForSelector("table.AccountDataTable, table.accountdatatable", {
+        timeout: 60_000,
+      });
+    } catch {
+      console.warn(
+        `  ${id}: Account Data table not found (Steam Help may still be on the login page).`,
+      );
+    }
+  }
 
   // Licenses table is server-rendered but can be huge — wait, scroll, stabilize.
   if (id === "licenses") {
@@ -180,12 +214,8 @@ async function main() {
 
   const context = await browser.newContext(
     reuse
-      ? { storageState: STORAGE_STATE }
-      : {
-          viewport: { width: 1280, height: 900 },
-          userAgent:
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        },
+      ? { storageState: STORAGE_STATE, viewport: { width: 1280, height: 900 } }
+      : { viewport: { width: 1280, height: 900 } },
   );
 
   const page = await context.newPage();

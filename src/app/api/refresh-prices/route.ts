@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import { loadLocalAccountData } from "@/lib/data/load-local";
-import { libraryTitlesForValuation } from "@/lib/analytics/spending";
+import { titlesForPriceRefresh } from "@/lib/analytics/spending";
+import { loadReceivedGifts } from "@/lib/gifts/received-store";
 import { rejectCrossOrigin } from "@/lib/http/same-origin";
 import { spawnDetachedScript } from "@/lib/process/spawn-script";
 import {
@@ -26,7 +27,15 @@ export const dynamic = "force-dynamic";
 async function libraryFreshness() {
   try {
     const bundle = await loadLocalAccountData();
-    const titles = libraryTitlesForValuation(bundle.purchases, bundle.licenses);
+    const received = await loadReceivedGifts();
+    const titles = titlesForPriceRefresh({
+      purchases: bundle.purchases,
+      licenses: bundle.licenses,
+      ownedTitles: bundle.playedGames
+        .filter((g) => !g.fromFamily)
+        .map((g) => g.name),
+      mailGiftTitles: received.gifts.map((g) => g.title),
+    });
     const cache = await loadPriceCache();
     const counts = countLatestQuotes(titles, cache);
     return {

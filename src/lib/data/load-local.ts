@@ -121,7 +121,7 @@ async function loadFromRawHtml(): Promise<LocalAccountBundle | null> {
       path.join(RAW_DIR, map.purchases),
       "utf8",
     );
-    const purchases = parseAccountDataHtml(purchasesHtml);
+    const purchases = parseAccountDataHtml(purchasesHtml, map.purchases);
     if (purchases.kind !== "purchase-history") return null;
 
     async function parseKind(
@@ -129,7 +129,7 @@ async function loadFromRawHtml(): Promise<LocalAccountBundle | null> {
       kind: Exclude<AccountDataParseResult["kind"], "unknown">,
     ): Promise<unknown[]> {
       const html = await fs.readFile(path.join(RAW_DIR, file), "utf8");
-      const result = parseAccountDataHtml(html);
+      const result = parseAccountDataHtml(html, file);
       if (result.kind === "unknown" || result.kind !== kind) return [];
       return "rows" in result ? result.rows : [];
     }

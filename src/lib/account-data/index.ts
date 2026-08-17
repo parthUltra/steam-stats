@@ -9,6 +9,7 @@ export {
   parseMoney,
   summarizePurchases,
   detectAccountDataKind,
+  isSteamHelpLoginHtml,
   parseTransactionDetailHtml,
   applyTransactionLineItems,
   type AccountDataParseResult,

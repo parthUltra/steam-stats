@@ -34,9 +34,13 @@ async function main() {
   const gamesHtmlFiles = files.filter(
     (f) => f === "games-all.html" || f === "games-recent.html",
   );
-  const otherFiles = files.filter(
-    (f) => f !== "games-all.html" && f !== "games-recent.html",
-  );
+  const skipParse = new Set([
+    "accountdata-index.html",
+    "account.html",
+    "games-all.html",
+    "games-recent.html",
+  ]);
+  const otherFiles = files.filter((f) => !skipParse.has(f));
 
   if (gamesHtmlFiles.length) {
     const existingPath = path.join(OUT_DIR, "games-played.json");
@@ -51,7 +55,7 @@ async function main() {
     let steamId = existing.steamId ?? null;
     const fromHtml: PlayedGame[] = [];
 
-    for (const file of ["games-all.html", "games-recent.html"]) {
+    for (const file of ["games-all.html", "games-recent.html"] as const) {
       if (!gamesHtmlFiles.includes(file)) continue;
       const html = await fs.readFile(path.join(SAMPLES_DIR, file), "utf8");
       const games = parseGamesPlayedHtml(html);
@@ -84,14 +88,41 @@ async function main() {
 
   for (const file of otherFiles.sort()) {
     const html = await fs.readFile(path.join(SAMPLES_DIR, file), "utf8");
-
-    const result = parseAccountDataHtml(html);
+    const result = parseAccountDataHtml(html, file);
     const outName = file.replace(/\.html$/, ".json");
-    await fs.writeFile(
-      path.join(OUT_DIR, outName),
-      JSON.stringify(result, null, 2),
-      "utf8",
-    );
+    const outPath = path.join(OUT_DIR, outName);
+
+    if (result.kind === "unknown") {
+      let keptExisting = false;
+      try {
+        const prev = JSON.parse(await fs.readFile(outPath, "utf8")) as {
+          kind?: string;
+          rows?: unknown[];
+        };
+        if (prev.kind && prev.kind !== "unknown" && (prev.rows?.length ?? 0) > 0) {
+          keptExisting = true;
+          summary[file] = {
+            ...result,
+            keptExisting: true,
+            existingKind: prev.kind,
+            existingRows: prev.rows?.length,
+          };
+          console.log(
+            `${file}: ${result.reason}; keeping existing ${prev.kind} (${prev.rows?.length} rows)`,
+          );
+        }
+      } catch {
+        // none
+      }
+      if (!keptExisting) {
+        await fs.writeFile(outPath, JSON.stringify(result, null, 2), "utf8");
+        summary[file] = result;
+        console.log(`${file}: skipped (${result.reason})`);
+      }
+      continue;
+    }
+
+    await fs.writeFile(outPath, JSON.stringify(result, null, 2), "utf8");
 
     if (result.kind === "purchase-history") {
       const stats = summarizePurchases(result.rows as PurchaseHistoryRow[]);
@@ -99,9 +130,6 @@ async function main() {
       console.log(
         `${file}: purchase-history ${result.rows.length} rows | spent≈${stats.spent} ${stats.currency} | refunds ${stats.refundCount}`,
       );
-    } else if (result.kind === "unknown") {
-      summary[file] = result;
-      console.log(`${file}: UNKNOWN (${result.reason})`);
     } else {
       summary[file] = { kind: result.kind, rowCount: result.rows.length };
       console.log(`${file}: ${result.kind} ${result.rows.length} rows`);

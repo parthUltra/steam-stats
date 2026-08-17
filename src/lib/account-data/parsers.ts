@@ -158,11 +158,55 @@ function cellText($: cheerio.CheerioAPI, el: AnyNode | null): string {
   return cleanText($(el).text());
 }
 
+export function isSteamHelpLoginHtml(html: string): boolean {
+  const $ = cheerio.load(html);
+  if ($("table.AccountDataTable, table.wallet_history_table, table.account_table").length) {
+    return false;
+  }
+  return (
+    /need_password=1/i.test(html) ||
+    /help\.steampowered\.com\/[^"' ]*\/login\/\?redir=/i.test(html) ||
+    ($("input[type='password']").length > 0 && /steam help/i.test($("title").text()))
+  );
+}
+
+const KIND_BY_FILE: Record<string, Exclude<AccountDataParseResult["kind"], "unknown">> = {
+  "purchase-history.html": "purchase-history",
+  "licenses.html": "licenses",
+  "account-spend.html": "account-spend",
+  "login-history.html": "login-history",
+  "machine-auth-names.html": "machine-auth-names",
+  "remote-play-sessions.html": "remote-play-sessions",
+};
+
+function accountDataTable($: cheerio.CheerioAPI) {
+  return $("table.AccountDataTable, table.accountdatatable").first();
+}
+
+function tableHeaderBlob(
+  $: cheerio.CheerioAPI,
+  $table: ReturnType<cheerio.CheerioAPI>,
+): string {
+  const thead = $table
+    .find("thead th")
+    .map((_, el) => cleanText($(el).text()))
+    .get();
+  if (thead.length) return thead.join("|").toLowerCase();
+  return $table
+    .find("tr")
+    .first()
+    .find("th,td")
+    .map((_, el) => cleanText($(el).text()))
+    .get()
+    .join("|")
+    .toLowerCase();
+}
+
 export function parsePurchaseHistory(html: string): PurchaseHistoryRow[] {
   const $ = cheerio.load(html);
   const rows: PurchaseHistoryRow[] = [];
 
-  $("table.wallet_history_table tbody tr.wallet_table_row").each((_, tr) => {
+  $("table.wallet_history_table tr.wallet_table_row").each((_, tr) => {
     const $tr = $(tr);
     const onclick = $tr.attr("onclick") ?? "";
     const transMatch = onclick.match(/transid=(\d+)/);
@@ -327,20 +371,33 @@ export function parseAccountDataTable(
   html: string,
 ): { headers: string[]; rows: string[][] } {
   const $ = cheerio.load(html);
-  const $table = $("table.AccountDataTable").first();
-  const headers = $table
+  const $table = accountDataTable($);
+  const headersFromThead = $table
     .find("thead th")
     .map((_, el) => cleanText($(el).text()))
     .get();
   const built: string[][] = [];
-  $table.find("tbody tr").each((_, tr) => {
-    built.push(
-      $(tr)
-        .find("td")
-        .map((__, td) => cleanText($(td).text()))
-        .get(),
-    );
+  const bodyRows = $table.find("tbody tr");
+  const source = bodyRows.length ? bodyRows : $table.find("tr");
+  source.each((_, tr) => {
+    const $tr = $(tr);
+    if ($tr.find("th").length && !$tr.find("td").length) return;
+    const cells = $tr
+      .find("td")
+      .map((__, td) => cleanText($(td).text()))
+      .get();
+    if (!cells.length) return;
+    built.push(cells);
   });
+  const headers =
+    headersFromThead.length > 0
+      ? headersFromThead
+      : $table
+          .find("tr")
+          .first()
+          .find("th,td")
+          .map((_, el) => cleanText($(el).text()))
+          .get();
 
   return { headers, rows: built };
 }
@@ -395,39 +452,71 @@ export function parseMachineAuthNames(html: string): MachineAuthName[] {
 
 export function detectAccountDataKind(
   html: string,
+  fileHint?: string,
 ): AccountDataParseResult["kind"] | "unknown" {
+  if (isSteamHelpLoginHtml(html)) return "unknown";
+
   const $ = cheerio.load(html);
   if ($("table.wallet_history_table").length) return "purchase-history";
-  if ($("table.account_table .license_date_col").length) return "licenses";
+  if (
+    $("table.account_table .license_date_col").length ||
+    $("table.account_table td").length >= 3
+  ) {
+    return "licenses";
+  }
 
-  const headers = $("table.AccountDataTable thead th")
-    .map((_, el) => cleanText($(el).text()).toLowerCase())
-    .get()
-    .join("|");
+  const $table = accountDataTable($);
+  const headers = $table.length ? tableHeaderBlob($, $table) : "";
 
-  if (headers.includes("time calculated") && headers.includes("amount")) {
+  if (
+    (headers.includes("time calculated") && headers.includes("amount")) ||
+    /TotalSpend/i.test(html)
+  ) {
     return "account-spend";
   }
   if (headers.includes("session started") && headers.includes("device type")) {
     return "remote-play-sessions";
   }
-  if (headers.includes("login time") && headers.includes("os type")) {
+  if (
+    (headers.includes("login time") && headers.includes("os type")) ||
+    headers.includes("os type")
+  ) {
     return "login-history";
   }
   if (headers.includes("computer name")) {
     return "machine-auth-names";
   }
 
-  // Fallback on body cues
-  if (/TotalSpend/i.test(html) && /AccountDataTable/i.test(html)) {
-    return "account-spend";
+  const hinted = fileHint
+    ? KIND_BY_FILE[fileHint.replace(/^.*[\\/]/, "").toLowerCase()]
+    : undefined;
+  if (hinted === "purchase-history" && $("table.wallet_history_table").length) {
+    return hinted;
+  }
+  if (hinted === "licenses" && $("table.account_table").length) return hinted;
+  if (
+    hinted &&
+    hinted !== "purchase-history" &&
+    hinted !== "licenses" &&
+    $table.length
+  ) {
+    return hinted;
   }
 
   return "unknown";
 }
 
-export function parseAccountDataHtml(html: string): AccountDataParseResult {
-  const kind = detectAccountDataKind(html);
+export function parseAccountDataHtml(
+  html: string,
+  fileHint?: string,
+): AccountDataParseResult {
+  if (isSteamHelpLoginHtml(html)) {
+    return {
+      kind: "unknown",
+      reason: "Steam Help login page (password required) — not Account Data",
+    };
+  }
+  const kind = detectAccountDataKind(html, fileHint);
   switch (kind) {
     case "purchase-history":
       return { kind, rows: parsePurchaseHistory(html) };
