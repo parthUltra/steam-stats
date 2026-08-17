@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-export function useGmailSync(onRefresh?: () => Promise<void> | void) {
+export function useGmailSync(
+  onRefresh?: () => Promise<void> | void,
+  onRefreshLows?: (opts?: { force?: boolean }) => Promise<void> | void,
+) {
   const [gmailWizardOpen, setGmailWizardOpen] = useState(false);
   const [mailSyncing, setMailSyncing] = useState(false);
   const [mailSyncError, setMailSyncError] = useState<string | null>(null);
@@ -54,6 +57,9 @@ export function useGmailSync(onRefresh?: () => Promise<void> | void) {
                 ? `Up to date · ${total} gifts`
                 : "No new gifts found",
           );
+          if (total > 0) {
+            await onRefreshLows?.();
+          }
           await onRefresh?.();
           return;
         }
@@ -78,7 +84,7 @@ export function useGmailSync(onRefresh?: () => Promise<void> | void) {
     } finally {
       setMailSyncing(false);
     }
-  }, [onRefresh]);
+  }, [onRefresh, onRefreshLows]);
 
   useEffect(() => {
     if (mailSyncing || mailSyncError || !mailSyncStatus) return;

@@ -46,7 +46,7 @@ export function DashboardView({
   const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [glossaryFocus, setGlossaryFocus] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const gmail = useGmailSync(onRefresh);
+  const gmail = useGmailSync(onRefresh, onRefreshLows);
   const itad = useItadKey(
     Boolean(data.meta.hasItadApiKey),
     onRefresh,

@@ -15,6 +15,7 @@ import {
 } from "@/lib/gifts/received-store";
 import { parseSteamGiftEmails } from "@/lib/gifts/parse-steam-gift-email";
 import { connectUserBrowser } from "@/lib/browser/user-chrome";
+import { refreshPricesForTitles } from "@/lib/pricing/prices";
 
 const ROOT = process.cwd();
 const SESSION_DIR = path.join(ROOT, ".gmail-session");
@@ -864,6 +865,31 @@ export async function syncGiftsFromGmail(): Promise<GmailSyncResult> {
     });
 
     const parsed = Math.max(imported.parsed, preview.length);
+    const giftTitles = imported.store.gifts
+      .map((g) => g.title.trim())
+      .filter(Boolean);
+    if (giftTitles.length) {
+      await writeStatus({
+        phase: "scraping",
+        message: "Refreshing gift prices…",
+        messagesScanned: scrape.threadsOpened,
+        added: imported.added,
+        total: imported.store.gifts.length,
+      });
+      try {
+        await refreshPricesForTitles(giftTitles, {
+          force: imported.added > 0,
+          itadFastPath: true,
+          limit: Math.max(giftTitles.length, 1),
+        });
+      } catch (err) {
+        console.warn(
+          "Gift price refresh failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
     const result: GmailSyncResult = {
       ok: true,
       added: imported.added,
