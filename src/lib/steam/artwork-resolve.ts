@@ -2,18 +2,24 @@
  * Resolve Steam library/header art. Newer titles use content-hash CDN paths
  * that 404 on the legacy /apps/{id}/library_600x900.jpg URL.
  */
-import fs from "node:fs/promises";
+import { readJsonFile, updateJsonFile } from "@/lib/data/json-store";
 import { dataPath, ensureDataDir } from "@/lib/data/load-local";
+import { isOffline, netFetch } from "@/lib/runtime";
 import {
   steamCapsuleUrl,
   steamHeaderUrl,
   steamLibraryCapsuleUrl,
 } from "@/lib/steam/artwork";
 
+/** The three image URLs for one app — the shape sent to the client. */
 export type ArtworkUrls = {
   library: string;
   header: string;
   capsule: string;
+};
+
+/** On-disk cache entry: URLs plus bookkeeping that never leaves the server. */
+export type CachedArtworkUrls = ArtworkUrls & {
   /** True when GetItems returned hashed asset paths */
   hashed: boolean;
   updatedAt: string;
@@ -23,7 +29,7 @@ export type ArtworkCache = {
   /** Bump to invalidate stale capsule URL preference. */
   version?: number;
   updatedAt: string;
-  byAppId: Record<string, ArtworkUrls>;
+  byAppId: Record<string, CachedArtworkUrls>;
 };
 
 const CACHE_FILE = "artwork-cache.json";
@@ -43,13 +49,12 @@ type StoreAssets = {
   small_capsule_2x?: string;
 };
 
-function legacyUrls(appId: number): ArtworkUrls {
+/** Deterministic legacy CDN paths — the fallback when nothing is cached. */
+export function legacyUrls(appId: number): ArtworkUrls {
   return {
     library: steamLibraryCapsuleUrl(appId),
     header: steamHeaderUrl(appId),
     capsule: steamCapsuleUrl(appId),
-    hashed: false,
-    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -58,9 +63,16 @@ function buildFromFormat(format: string, filename: string): string {
   return `${CDN}${path}`;
 }
 
-function urlsFromAssets(appId: number, assets: StoreAssets): ArtworkUrls {
+function urlsFromAssets(appId: number, assets: StoreAssets): CachedArtworkUrls {
   const format = assets.asset_url_format;
-  if (!format) return legacyUrls(appId);
+  if (!format) {
+    // The store answered but has no hashed assets: legacy paths are the answer.
+    return {
+      ...legacyUrls(appId),
+      hashed: false,
+      updatedAt: new Date().toISOString(),
+    };
+  }
 
   const libraryFile =
     assets.library_capsule_2x ||
@@ -90,26 +102,69 @@ function urlsFromAssets(appId: number, assets: StoreAssets): ArtworkUrls {
   };
 }
 
+const emptyCache = (): ArtworkCache => ({
+  version: CACHE_VERSION,
+  updatedAt: "",
+  byAppId: {},
+});
+
+/** Missing file → empty cache; unreadable / corrupt file → throws. */
+async function readArtworkCacheStrict(): Promise<ArtworkCache> {
+  const parsed = await readJsonFile<ArtworkCache>(dataPath(CACHE_FILE));
+  if (!parsed) return emptyCache();
+  parsed.byAppId ??= {};
+  return parsed;
+}
+
+/**
+ * Cache read only — no network, no write, no directory creation. This is the
+ * request path, and artwork is regenerable, so a corrupt file degrades to the
+ * legacy CDN URLs instead of failing the dashboard. (The write path below is
+ * strict and will not save over a corrupt file.)
+ */
 export async function loadArtworkCache(): Promise<ArtworkCache> {
-  await ensureDataDir();
   try {
-    const raw = await fs.readFile(dataPath(CACHE_FILE), "utf8");
-    return JSON.parse(raw) as ArtworkCache;
-  } catch {
-    return { version: CACHE_VERSION, updatedAt: "", byAppId: {} };
+    return await readArtworkCacheStrict();
+  } catch (err) {
+    console.warn(err instanceof Error ? err.message : err);
+    return emptyCache();
   }
 }
 
-async function saveArtworkCache(cache: ArtworkCache) {
-  await ensureDataDir();
-  await fs.writeFile(dataPath(CACHE_FILE), JSON.stringify(cache, null, 2));
+/** Entries on disk that are newer than ours (another process wrote them) win. */
+function mergeArtworkCaches(mine: ArtworkCache, disk: ArtworkCache): ArtworkCache {
+  for (const [id, theirs] of Object.entries(disk.byAppId ?? {})) {
+    const ours = mine.byAppId[id];
+    if (
+      !ours ||
+      (Date.parse(theirs.updatedAt) || 0) > (Date.parse(ours.updatedAt) || 0)
+    ) {
+      mine.byAppId[id] = theirs;
+    }
+  }
+  return mine;
 }
 
-async function fetchStoreAssets(
-  appIds: number[],
-): Promise<Map<number, StoreAssets>> {
+/** Atomic, locked, merged with what is on disk. Throws if the file is corrupt. */
+async function saveArtworkCache(cache: ArtworkCache) {
+  await ensureDataDir();
+  await updateJsonFile<ArtworkCache>(dataPath(CACHE_FILE), (disk) =>
+    disk ? mergeArtworkCaches(cache, disk) : cache,
+  );
+}
+
+/**
+ * `answered` holds every id whose chunk got a successful store response, so the
+ * caller can tell "the store has no assets for this app" (definitive) from
+ * "the request failed" (retry later).
+ */
+async function fetchStoreAssets(appIds: number[]): Promise<{
+  assets: Map<number, StoreAssets>;
+  answered: Set<number>;
+}> {
   const out = new Map<number, StoreAssets>();
-  if (!appIds.length) return out;
+  const answered = new Set<number>();
+  if (!appIds.length) return { assets: out, answered };
 
   const chunkSize = 50;
   for (let i = 0; i < appIds.length; i += chunkSize) {
@@ -124,7 +179,7 @@ async function fetchStoreAssets(
     );
     url.searchParams.set("input_json", JSON.stringify(input));
     try {
-      const res = await fetch(url.toString(), {
+      const res = await netFetch(url.toString(), {
         headers: { "User-Agent": "steam-stats-local/0.1" },
         cache: "no-store",
       });
@@ -139,22 +194,26 @@ async function fetchStoreAssets(
           out.set(item.appid, item.assets);
         }
       }
+      for (const id of chunk) answered.add(id);
     } catch {
-      // keep legacy for this chunk
+      // chunk failed — its ids stay unanswered and are retried next run
     }
   }
-  return out;
+  return { assets: out, answered };
 }
 
 /**
- * Ensure artwork URLs for app IDs. Uses disk cache; refreshes missing/stale via GetItems.
+ * Ensure artwork URLs for app IDs. Uses disk cache; refreshes missing/stale via
+ * GetItems and writes the cache. Network + write: called from
+ * scripts/refresh-prices.ts, never from the request path (which reads
+ * `loadArtworkCache()` and falls back to `legacyUrls`).
  */
 export async function resolveArtworkForAppIds(
   appIds: number[],
   opts?: { force?: boolean },
 ): Promise<Record<string, ArtworkUrls>> {
   const unique = [...new Set(appIds.filter((id) => id > 0))];
-  const cache = await loadArtworkCache();
+  const cache = await readArtworkCacheStrict();
   const versionStale = cache.version !== CACHE_VERSION;
   const now = Date.now();
   const needFetch: number[] = [];
@@ -176,18 +235,24 @@ export async function resolveArtworkForAppIds(
     needFetch.push(id);
   }
 
-  if (needFetch.length) {
-    const assets = await fetchStoreAssets(needFetch);
+  if (needFetch.length && !isOffline()) {
+    const { assets, answered } = await fetchStoreAssets(needFetch);
+    // Persist only ids the store actually answered for. After a failed request
+    // (network blip, non-200) the id keeps its previous entry, or stays absent,
+    // so it is retried next run instead of pinning legacy URLs for a week.
+    let resolved = 0;
     for (const id of needFetch) {
-      const a = assets.get(id);
-      cache.byAppId[String(id)] = a ? urlsFromAssets(id, a) : legacyUrls(id);
+      if (!answered.has(id)) continue;
+      cache.byAppId[String(id)] = urlsFromAssets(id, assets.get(id) ?? {});
+      resolved += 1;
     }
-    cache.version = CACHE_VERSION;
-    cache.updatedAt = new Date().toISOString();
-    await saveArtworkCache(cache);
-  } else if (versionStale) {
-    cache.version = CACHE_VERSION;
-    await saveArtworkCache(cache);
+    // Only stamp the new version once every id was re-resolved; otherwise the
+    // unanswered ones would look fresh under the new version.
+    if (resolved === needFetch.length) cache.version = CACHE_VERSION;
+    if (resolved > 0) {
+      cache.updatedAt = new Date().toISOString();
+      await saveArtworkCache(cache);
+    }
   }
 
   const result: Record<string, ArtworkUrls> = {};
@@ -196,12 +261,4 @@ export async function resolveArtworkForAppIds(
       cache.byAppId[String(id)] ?? legacyUrls(id);
   }
   return result;
-}
-
-export function artworkFor(
-  map: Record<string, ArtworkUrls> | undefined,
-  appId: number | null | undefined,
-): ArtworkUrls | null {
-  if (appId == null || appId <= 0) return null;
-  return map?.[String(appId)] ?? legacyUrls(appId);
 }

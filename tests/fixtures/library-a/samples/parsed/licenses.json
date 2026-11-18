@@ -1,0 +1,307 @@
+{
+  "kind": "licenses",
+  "status": "ok",
+  "rows": [
+    {
+      "dateText": "11 Oct, 2025",
+      "item": "Marrow Deep",
+      "acquisitionMethod": "Gift/Guest Pass",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "2 Aug, 2025",
+      "item": "Oddment Hotel",
+      "acquisitionMethod": "Complimentary",
+      "packageId": "9100045",
+      "removableComplimentary": true
+    },
+    {
+      "dateText": "21 Jun, 2025",
+      "item": "Bramble Post Limited Free Promotional Package - Jun 2025",
+      "acquisitionMethod": "Complimentary",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "14 Mar, 2025",
+      "item": "Cobalt Siege Free Weekend - Mar 2025",
+      "acquisitionMethod": "Complimentary",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "19 Jan, 2024",
+      "item": "Driftwood Tales Limited Free Promotional Package - Jan 2024",
+      "acquisitionMethod": "Complimentary",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "9 May, 2021",
+      "item": "Skyline Brawl",
+      "acquisitionMethod": "Complimentary",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "2 Oct, 2026",
+      "item": "Ironroot II",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "17 Apr, 2026",
+      "item": "Obsidian Tram",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "21 Mar, 2026",
+      "item": "Pyrewatch Eternal Standard Edition",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "14 Feb, 2026",
+      "item": "Tall Grass",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "26 Dec, 2025",
+      "item": "Wintering",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "9 Sep, 2025",
+      "item": "Sunken Arcade",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "2 Jun, 2025",
+      "item": "Marigold Engine",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "14 Mar, 2025",
+      "item": "Cinder Vale",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "20 Feb, 2025",
+      "item": "Hearthbound",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "15 Jan, 2025",
+      "item": "Kestrel Run",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "28 Nov, 2024",
+      "item": "Farlight Courier",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "3 Sep, 2024",
+      "item": "Lanternfall Collection",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "30 Jun, 2024",
+      "item": "Brass Meridian",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "19 May, 2024",
+      "item": "Hollow Circuit: Overclock",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "1 May, 2024",
+      "item": "Lowtide",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "6 Apr, 2024",
+      "item": "Saltwater Diner - Gourmet Edition",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "12 Jan, 2024",
+      "item": "Nine Lamps",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "12 Dec, 2023",
+      "item": "Lumen Drift",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "11 Nov, 2023",
+      "item": "Voidrunner 2: Ultimate Edition",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "22 Sep, 2023",
+      "item": "Signal Kite",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "7 Jul, 2023",
+      "item": "Anvil Saga: The Complete Collection",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "24 Jun, 2023",
+      "item": "Nightglass",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "24 Jun, 2023",
+      "item": "Moss Kingdom",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "24 Jun, 2023",
+      "item": "Quiet Harbor",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "3 Mar, 2023",
+      "item": "Rustline Rally",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "25 Nov, 2022",
+      "item": "Glass Orchard",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "8 Oct, 2022",
+      "item": "Pyrewatch",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "30 Jul, 2022",
+      "item": "Thimblewood",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "9 Jul, 2022",
+      "item": "Tidebreaker",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "14 Feb, 2022",
+      "item": "Paper Lanterns™",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "2 Jan, 2022",
+      "item": "Hollow Circuit",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "5 Dec, 2021",
+      "item": "Starfall Tactics - Crimson Front",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "16 Oct, 2021",
+      "item": "Copper Sparrow",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "18 Aug, 2021",
+      "item": "Ironroot",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "27 Jun, 2021",
+      "item": "Emberwake",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "4 Apr, 2021",
+      "item": "Vesper Lines",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    },
+    {
+      "dateText": "12 Mar, 2021",
+      "item": "Starfall Tactics",
+      "acquisitionMethod": "Steam Store",
+      "packageId": null,
+      "removableComplimentary": false
+    }
+  ]
+}

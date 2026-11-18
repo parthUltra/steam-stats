@@ -1,0 +1,31 @@
+name: Feature request
+description: A new stat, view or capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are public. Describe the idea in general terms and leave out your own purchases, Steam ID and screenshots of your own dashboard.
+  - type: textarea
+    id: question
+    attributes:
+      label: What question should the app answer, or what should it let you do?
+      description: Stats boards are titled with the question they answer, so phrasing it that way helps.
+      placeholder: "Example: Which of my purchases were bought within a week of a deeper discount?"
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: What data would it need?
+      description: Steam exposes lifetime playtime, the last two weeks and a last-played date, plus purchase history and licenses. If the idea needs something else, say where it would come from.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How do you get this today, if at all?
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Fit
+      options:
+        - label: It works with data stored on the user's own machine and needs no hosted service.

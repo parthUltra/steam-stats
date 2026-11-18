@@ -1,5 +1,10 @@
 import * as cheerio from "cheerio";
 import type { AnyNode } from "domhandler";
+import { parseSteamDate } from "@/lib/dates";
+
+// The date parser has no HTML dependency; it lives in src/lib/dates.ts so
+// client-reachable modules can use it without pulling cheerio.
+export { parseSteamDate };
 
 export type Money = {
   raw: string;
@@ -12,6 +17,12 @@ export type PurchaseLineItem = {
   amount: number | null;
   currencyHint: string | null;
   raw: string;
+  /**
+   * This item was refunded while the rest of the purchase was kept (set when
+   * line items are attached to a partially refunded row). `amount` is then
+   * the refunded amount of that purchase.
+   */
+  refunded?: boolean;
 };
 
 export type PurchaseHistoryRow = {
@@ -35,7 +46,15 @@ export type PurchaseHistoryRow = {
   walletChange: Money | null;
   walletBalance: Money | null;
   transactionId: string | null;
+  /** True only when the whole purchase was refunded (every item). */
   refunded: boolean;
+  /**
+   * Some items were refunded and some kept. `refunded` stays false; the kept
+   * items are still owned and `total` is still the full original charge.
+   */
+  partiallyRefunded?: boolean;
+  /** Names of the refunded items (all of `items` when `refunded`). */
+  refundedItems?: string[];
   isWalletBalanceChange: boolean;
 };
 
@@ -75,80 +94,193 @@ export type MachineAuthName = {
   systemSuppliedName: string;
 };
 
-export type AccountDataParseResult =
-  | { kind: "purchase-history"; rows: PurchaseHistoryRow[] }
-  | { kind: "licenses"; rows: LicenseRow[] }
-  | { kind: "account-spend"; rows: AccountSpendRow[] }
-  | { kind: "remote-play-sessions"; rows: RemotePlaySession[] }
-  | { kind: "login-history"; rows: LoginHistoryRow[] }
-  | { kind: "machine-auth-names"; rows: MachineAuthName[] }
-  | { kind: "unknown"; reason: string };
-
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  "₹": "INR",
-  $: "USD",
-  "€": "EUR",
-  "£": "GBP",
-  "¥": "JPY",
-  "₩": "KRW",
-  "₽": "RUB",
-  A$: "AUD",
-  C$: "CAD",
-  R$: "BRL",
+/** "Showing licenses 1-100 of 453" + the Next link of a paginated page. */
+export type SourcePagination = {
+  from: number;
+  to: number;
+  total: number;
+  /** href of the Next link; null on the last page */
+  nextHref: string | null;
 };
 
+/**
+ * - `ok`              parsed, and the page was the whole data set
+ * - `partial`         parsed, but the page says more rows exist (pagination)
+ * - `login-required`  a Steam Help login page was saved in place of the data
+ * - `unrecognized`    not a page this parser knows
+ */
+export type SourceParseStatus =
+  | "ok"
+  | "partial"
+  | "login-required"
+  | "unrecognized";
+
+type Parsed = { status: "ok" | "partial" };
+
+export type AccountDataParseResult =
+  | ({ kind: "purchase-history"; rows: PurchaseHistoryRow[] } & Parsed)
+  | ({
+      kind: "licenses";
+      rows: LicenseRow[];
+      /** The last saved page's range and Next link. */
+      pagination?: SourcePagination;
+      coverage?: LicenseCoverage;
+      /** Why the status is `partial`, when the pages alone do not show it. */
+      reason?: string;
+    } & Parsed)
+  | ({ kind: "account-spend"; rows: AccountSpendRow[] } & Parsed)
+  | ({ kind: "remote-play-sessions"; rows: RemotePlaySession[] } & Parsed)
+  | ({ kind: "login-history"; rows: LoginHistoryRow[] } & Parsed)
+  | ({ kind: "machine-auth-names"; rows: MachineAuthName[] } & Parsed)
+  | {
+      kind: "unknown";
+      status: "login-required" | "unrecognized";
+      reason: string;
+    };
+
+/**
+ * Currency markers, most specific first: "R$" / "A$" / "HK$" must be tried
+ * before the bare "$", which alone means USD.
+ */
+const CURRENCY_MARKERS: [RegExp, string][] = [
+  [/ARS\$/, "ARS"],
+  [/CLP\$/, "CLP"],
+  [/COL\$/, "COP"],
+  [/CDN\$/, "CAD"],
+  [/Mex\$/i, "MXN"],
+  [/US\$/, "USD"],
+  [/NZ\$/, "NZD"],
+  [/HK\$/, "HKD"],
+  [/NT\$/, "TWD"],
+  [/R\$/, "BRL"],
+  [/A\$/, "AUD"],
+  [/C\$/, "CAD"],
+  [/S\$/, "SGD"],
+  [/\$U/, "UYU"],
+  [/S\/\.?/, "PEN"],
+  [/₹/, "INR"],
+  [/€/, "EUR"],
+  [/£/, "GBP"],
+  [/¥/, "JPY"],
+  [/₩/, "KRW"],
+  [/₽|[pр]уб/i, "RUB"],
+  [/₺|(?<![A-Za-z])TL(?![A-Za-z])/, "TRY"],
+  [/zł/i, "PLN"],
+  [/(?<![A-Za-z])Rp(?![A-Za-z])/, "IDR"],
+  [/(?<![A-Za-z])RM(?![A-Za-z])/, "MYR"],
+  [/₫/, "VND"],
+  [/₴/, "UAH"],
+  [/₸/, "KZT"],
+  [/฿/, "THB"],
+  [/₱/, "PHP"],
+  [/₪/, "ILS"],
+  [/\$/, "USD"],
+];
+
+/** ISO 4217 codes Steam prices in; a random capitalised word is not a currency. */
+const ISO_CURRENCIES = new Set(
+  (
+    "USD EUR GBP INR JPY KRW RUB BRL AUD CAD NZD HKD SGD TWD MXN ARS CLP COP " +
+    "UYU PEN PLN TRY IDR MYR VND UAH KZT THB PHP ILS CHF CNY NOK SEK DKK CZK " +
+    "HUF RON ZAR AED SAR QAR KWD CRC"
+  ).split(" "),
+);
+
+/** Currencies written with three decimals: "1.250 KWD" is 1.25, not 1250. */
+const THREE_DECIMAL_CURRENCIES = new Set(["KWD", "BHD", "OMR", "JOD", "TND"]);
+
+function detectCurrency(raw: string): string | null {
+  // An explicit ISO code is the least ambiguous marker.
+  for (const m of raw.matchAll(/(?<![A-Za-z$])([A-Z]{3})(?![A-Za-z$])/g)) {
+    if (ISO_CURRENCIES.has(m[1])) return m[1];
+  }
+  for (const [re, code] of CURRENCY_MARKERS) {
+    if (re.test(raw)) return code;
+  }
+  return null;
+}
+
+/** "1,49,999.00" / "1.234,56" / "1 234,56" / "12.500" → a JS number. */
+function parseLocalizedNumber(token: string, currency: string | null): number {
+  let n = token.replace(/[\s '’]/g, "");
+  const hasComma = n.includes(",");
+  const hasDot = n.includes(".");
+
+  if (hasComma && hasDot) {
+    // Whichever comes last is the decimal mark.
+    n =
+      n.lastIndexOf(",") > n.lastIndexOf(".")
+        ? n.replace(/\./g, "").replace(",", ".")
+        : n.replace(/,/g, "");
+  } else if (hasComma) {
+    const parts = n.split(",");
+    // "19,99" is a decimal comma; "1,499" and "1,49,999" are grouping.
+    n =
+      parts.length === 2 && parts[1].length <= 2
+        ? `${parts[0]}.${parts[1]}`
+        : n.replace(/,/g, "");
+  } else if (hasDot) {
+    const parts = n.split(".");
+    const grouped =
+      parts.length > 2 ||
+      (parts[1].length === 3 &&
+        parts[0] !== "0" &&
+        parts[0].length <= 3 &&
+        !(currency && THREE_DECIMAL_CURRENCIES.has(currency)));
+    // "1.234 €" / "12.500" / "150.000" are thousands; "9.99" is a decimal.
+    if (grouped) n = n.replace(/\./g, "");
+  }
+  return Number(n);
+}
+
+/**
+ * Parse a Steam price cell. `currencyHint` is the currency actually found in
+ * the text (null if none) — never a guess. Handles Indian grouping, decimal
+ * commas, space / apostrophe grouping, "5,--€", negatives ("-₹ 5", "(₹ 5)")
+ * and "Free" (0).
+ */
 export function parseMoney(rawInput: string): Money | null {
-  const raw = rawInput.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  const raw = rawInput.replace(/[   ]/g, " ").replace(/\s+/g, " ").trim();
   if (!raw) return null;
 
-  let currencyHint: string | null = null;
-  for (const [sym, code] of Object.entries(CURRENCY_SYMBOLS)) {
-    if (raw.includes(sym)) {
-      currencyHint = code;
-      break;
-    }
-  }
-  const codeMatch = raw.match(/\b([A-Z]{3})\b/);
-  if (!currencyHint && codeMatch) currencyHint = codeMatch[1];
+  const currencyHint = detectCurrency(raw);
+  if (/^free\b/i.test(raw)) return { raw, amount: 0, currencyHint };
 
-  // Keep digits, dots, commas, minus
-  const numeric = raw.replace(/[^\d,.\-]/g, "");
-  if (!numeric || numeric === "-" || numeric === "." || numeric === ",") {
-    return { raw, amount: null, currencyHint };
-  }
+  // "5,--" / "5.-" are whole amounts
+  const text = raw.replace(/[.,]-{1,2}(?!\d)/g, "");
+  const token = text.match(
+    /\d{1,3}(?:[ '’]\d{3})+(?:[.,]\d+)?|\d[\d.,]*\d|\d/,
+  )?.[0];
+  if (!token) return { raw, amount: null, currencyHint };
 
-  let normalized = numeric;
-  // Indian / European: 1,234.56 or 1.234,56 or 2,176
-  if (normalized.includes(",") && normalized.includes(".")) {
-    if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
-      // 1.234,56
-      normalized = normalized.replace(/\./g, "").replace(",", ".");
-    } else {
-      // 1,234.56
-      normalized = normalized.replace(/,/g, "");
-    }
-  } else if (normalized.includes(",")) {
-    const parts = normalized.split(",");
-    if (parts.length === 2 && parts[1].length <= 2) {
-      normalized = `${parts[0]}.${parts[1]}`;
-    } else {
-      normalized = normalized.replace(/,/g, "");
-    }
-  }
+  const before = text.slice(0, text.indexOf(token));
+  const negative =
+    /^\(.*\)$/.test(raw) || /[-−]\s*[^\d\s-]{0,4}\s*$/.test(before);
 
-  const amount = Number(normalized);
-  return {
-    raw,
-    amount: Number.isFinite(amount) ? amount : null,
-    currencyHint,
-  };
+  const value = parseLocalizedNumber(token, currencyHint);
+  if (!Number.isFinite(value)) return { raw, amount: null, currencyHint };
+  return { raw, amount: negative && value !== 0 ? -value : value, currencyHint };
+}
+
+/** A character reference: `&copy;`, `&#8482;`, `&#x2122;`. */
+const ENTITY = /&(?:#\d{1,7}|#x[0-9a-f]{1,6}|[a-z][a-z0-9]{1,30});/i;
+
+/**
+ * Decode character references left in already-extracted text. Steam
+ * double-encodes some titles ("Darkest Dungeon&amp;copy;: …"), so the DOM
+ * text still reads "&copy;". Decoded once here, at parse time; a <textarea>
+ * is RCDATA, so references are resolved and nothing is parsed as markup.
+ */
+function decodeEntities(value: string): string {
+  if (!ENTITY.test(value)) return value;
+  return cheerio
+    .load(`<textarea>${value.replace(/</g, "&lt;")}</textarea>`)("textarea")
+    .text();
 }
 
 function cleanText(value: string): string {
-  return value
+  return decodeEntities(value.replace(/\u00a0/g, " "))
     .replace(/\u00a0/g, " ")
-    .replace(/&trade;/g, "™")
-    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -210,16 +342,29 @@ export function parsePurchaseHistory(html: string): PurchaseHistoryRow[] {
     const $tr = $(tr);
     const onclick = $tr.attr("onclick") ?? "";
     const transMatch = onclick.match(/transid=(\d+)/);
-    const refunded =
-      $tr.find(".wht_refunded, .wht_item_refunded").length > 0 ||
-      $tr.find(".wht_items").hasClass("wht_item_refunded");
-
-    const items = $tr
-      .find("td.wht_items div")
-      .map((__, el) => cleanText($(el).text()))
+    const REFUNDED_ITEM = "wht_item_refunded";
+    const $itemsCell = $tr.find("td.wht_items");
+    const itemEntries = $itemsCell
+      .find("div")
+      .map((__, el) => ({
+        name: cleanText($(el).text()),
+        refunded: $(el).hasClass(REFUNDED_ITEM),
+      }))
       .get()
-      .filter(Boolean)
-      .filter((name) => !/^gift sent to\b/i.test(name));
+      .filter((e) => e.name && !/^gift sent to\b/i.test(e.name));
+    const items = itemEntries.map((e) => e.name);
+
+    // Steam marks a full refund on the cells (items / type / total) and a
+    // partial one on the individual item lines. Only the first is a refund of
+    // the purchase; with the second the other items are still owned and paid.
+    const refundedLines = itemEntries.filter((e) => e.refunded);
+    const partiallyRefunded =
+      refundedLines.length > 0 && refundedLines.length < itemEntries.length;
+    const refunded =
+      !partiallyRefunded &&
+      (refundedLines.length > 0 ||
+        $itemsCell.hasClass(REFUNDED_ITEM) ||
+        $tr.find(".wht_refunded").length > 0);
 
     const typeCell = cleanText($tr.find("td.wht_type").text());
     const itemsHtml = $tr.find("td.wht_items").html() ?? "";
@@ -291,6 +436,10 @@ export function parsePurchaseHistory(html: string): PurchaseHistoryRow[] {
       walletBalance: parseMoney(cellText($, $tr.find("td.wht_wallet_balance").get(0) ?? null)),
       transactionId: transMatch?.[1] ?? null,
       refunded,
+      partiallyRefunded,
+      refundedItems: refunded
+        ? items
+        : refundedLines.map((e) => e.name),
       isWalletBalanceChange: $tr.hasClass("wallet_table_row_amt_change"),
     });
   });
@@ -325,8 +474,17 @@ export function applyTransactionLineItems(
 ): PurchaseHistoryRow[] {
   return rows.map((row) => {
     if (!row.transactionId) return row;
-    const lineItems = byTransactionId[row.transactionId];
-    if (!lineItems?.length) return row;
+    const detail = byTransactionId[row.transactionId];
+    if (!detail?.length) return row;
+    // Carry a partial refund down to the item it applies to, so its real
+    // price (not an equal share) can be taken off the purchase.
+    const key = (name: string) => name.toLowerCase().replace(/\s+/g, " ").trim();
+    const refundedNames = new Set(
+      row.partiallyRefunded ? (row.refundedItems ?? []).map(key) : [],
+    );
+    const lineItems = detail.map((l) =>
+      refundedNames.has(key(l.name)) ? { ...l, refunded: true } : l,
+    );
     return {
       ...row,
       lineItems,
@@ -365,6 +523,95 @@ export function parseLicenses(html: string): LicenseRow[] {
   });
 
   return rows;
+}
+
+/**
+ * The licences page is paginated ("Showing licenses 1-100 of 453" + a Next
+ * link carrying a continuation token). Returns null when the page has no
+ * paginator, i.e. it is the whole list.
+ */
+export function parseLicensePagination(html: string): SourcePagination | null {
+  const $ = cheerio.load(html);
+  const $ctn = $(".license_paginator_ctn");
+  if (!$ctn.length) return null;
+  const m = cleanText($ctn.text()).match(
+    /(\d[\d,.]*)\s*[-–]\s*(\d[\d,.]*)\D+?(\d[\d,.]*)/,
+  );
+  const nextHref = $ctn.find("a.license_paginator_next").attr("href") ?? null;
+  if (!m && !nextHref) return null;
+  const int = (v: string | undefined) => Number((v ?? "").replace(/\D/g, "")) || 0;
+  return { from: int(m?.[1]), to: int(m?.[2]), total: int(m?.[3]), nextHref };
+}
+
+/**
+ * A licences page at all — it has the licence table or the paginator. A login
+ * or error page saved in its place has neither. (A real page can render zero
+ * rows: Steam pages by licence record and shows fewer rows than records.)
+ */
+export function isLicensesPage(html: string): boolean {
+  const $ = cheerio.load(html);
+  return (
+    $("table.account_table").length > 0 || $(".license_paginator_ctn").length > 0
+  );
+}
+
+/**
+ * How much of the licence list the saved pages cover, counted in Steam's
+ * licence *records* ("Showing licenses 1-100 of 453"), not in table rows: a
+ * page of 100 records renders fewer rows, so rows < records says nothing.
+ */
+export type LicenseCoverage = {
+  pagesSaved: number;
+  /** Records covered by the saved pages' ranges (100 for one "1-100" page). */
+  recordsCovered: number;
+  /** Records in the whole list, as the paginator reports. */
+  recordsTotal: number;
+};
+
+/**
+ * Parse every saved page of the licences list, in order. `partial` when the
+ * saved pages cover fewer records than the list has, or the last page still
+ * has a Next link.
+ */
+export function parseLicensePages(pages: string[]): {
+  kind: "licenses";
+  status: "ok" | "partial";
+  rows: LicenseRow[];
+  pagination?: SourcePagination;
+  coverage?: LicenseCoverage;
+} {
+  const rows = pages.flatMap((html) => parseLicenses(html));
+  const paginations = pages.map((html) => parseLicensePagination(html));
+  const last = paginations.length ? paginations[paginations.length - 1] : null;
+  const ranged = paginations.filter(
+    (p): p is SourcePagination => p != null && p.total > 0,
+  );
+  const coverage: LicenseCoverage | null = ranged.length
+    ? {
+        pagesSaved: pages.length,
+        recordsCovered: ranged.reduce(
+          (sum, p) => sum + Math.max(0, p.to - p.from + 1),
+          0,
+        ),
+        recordsTotal: Math.max(...ranged.map((p) => p.total)),
+      }
+    : null;
+  const partial =
+    Boolean(last?.nextHref) ||
+    (coverage != null && coverage.recordsCovered < coverage.recordsTotal);
+  return {
+    kind: "licenses",
+    status: partial ? "partial" : "ok",
+    rows,
+    ...(last ? { pagination: last } : {}),
+    ...(coverage ? { coverage } : {}),
+  };
+}
+
+/** The history page still has rows behind its "Load More" button. */
+function purchaseHistoryHasMore(html: string): boolean {
+  const m = html.match(/g_historyCursor\s*=\s*([^;\n]+)/);
+  return m != null && !/^null\b/.test(m[1].trim());
 }
 
 export function parseAccountDataTable(
@@ -511,31 +758,46 @@ export function parseAccountDataHtml(
   fileHint?: string,
 ): AccountDataParseResult {
   if (isSteamHelpLoginHtml(html)) {
+    // Not "no rows": the fetch saved a login redirect. Callers must tell the
+    // owner to re-fetch instead of showing an empty table.
     return {
       kind: "unknown",
+      status: "login-required",
       reason: "Steam Help login page (password required) — not Account Data",
     };
   }
   const kind = detectAccountDataKind(html, fileHint);
   switch (kind) {
     case "purchase-history":
-      return { kind, rows: parsePurchaseHistory(html) };
+      return {
+        kind,
+        status: purchaseHistoryHasMore(html) ? "partial" : "ok",
+        rows: parsePurchaseHistory(html),
+      };
     case "licenses":
-      return { kind, rows: parseLicenses(html) };
+      return parseLicensePages([html]);
     case "account-spend":
-      return { kind, rows: parseAccountSpend(html) };
+      return { kind, status: "ok", rows: parseAccountSpend(html) };
     case "remote-play-sessions":
-      return { kind, rows: parseRemotePlaySessions(html) };
+      return { kind, status: "ok", rows: parseRemotePlaySessions(html) };
     case "login-history":
-      return { kind, rows: parseLoginHistory(html) };
+      return { kind, status: "ok", rows: parseLoginHistory(html) };
     case "machine-auth-names":
-      return { kind, rows: parseMachineAuthNames(html) };
+      return { kind, status: "ok", rows: parseMachineAuthNames(html) };
     default:
-      return { kind: "unknown", reason: "Unrecognized Account Data HTML shape" };
+      return {
+        kind: "unknown",
+        status: "unrecognized",
+        reason: "Unrecognized Account Data HTML shape",
+      };
   }
 }
 
-/** Aggregate helpers for spend analytics */
+/**
+ * Rough totals for the parse script's console line. Counts every non-refunded
+ * "purchase" row, gifts and gift cards included — the dashboard's figures come
+ * from buildSpendingAnalytics, not from here.
+ */
 export function summarizePurchases(rows: PurchaseHistoryRow[]) {
   const purchases = rows.filter((r) => /purchase/i.test(r.type) && !r.refunded);
   const refunds = rows.filter((r) => r.refunded);
@@ -559,7 +821,9 @@ export function summarizePurchases(rows: PurchaseHistoryRow[]) {
     refundCount: refunds.length,
     spent,
     refundedTotal,
-    netSpent: spent - refundedTotal,
+    // `spent` already leaves refunded purchases out; subtracting them again
+    // would count each refund twice.
+    netSpent: spent,
     currency,
     uniqueItems: [...new Set(rows.flatMap((r) => r.items))],
   };

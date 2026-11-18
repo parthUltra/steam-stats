@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import {
+  isValidItadApiKey,
   resolveItadApiKey,
   saveItadCredentials,
 } from "@/lib/pricing/itad-credentials";
+import { serverError } from "@/lib/http/errors";
 import { rejectCrossOrigin } from "@/lib/http/same-origin";
 
 export const runtime = "nodejs";
@@ -23,16 +25,21 @@ export async function GET() {
  * POST — save a manually pasted ITAD API key immediately (no refresh wait).
  * Body: { apiKey: string }
  * Client should start /api/refresh-prices after a successful save.
+ *
+ * The key is stored only in data/itad-credentials.json (owner-only). It is not
+ * written to .env.local and not copied into process.env.
  */
 export async function POST(req: Request) {
   const denied = rejectCrossOrigin(req);
   if (denied) return denied;
   try {
-    const body = (await req.json().catch(() => ({}))) as {
-      apiKey?: string;
-    };
-    const apiKey = body.apiKey?.trim() ?? "";
-    if (apiKey.length < 16) {
+    const body = (await req.json().catch(() => null)) as {
+      apiKey?: unknown;
+    } | null;
+    const raw = body?.apiKey;
+    // Surrounding spaces from a paste are fine; anything else must match exactly.
+    const apiKey = typeof raw === "string" ? raw.replace(/^ +| +$/g, "") : "";
+    if (!isValidItadApiKey(apiKey)) {
       return NextResponse.json(
         { ok: false, error: "Paste a valid IsThereAnyDeal API key." },
         { status: 400 },
@@ -40,7 +47,6 @@ export async function POST(req: Request) {
     }
 
     await saveItadCredentials(apiKey, "steam-stats");
-    process.env.ISTHEREANYDEAL_API_KEY = apiKey;
 
     return NextResponse.json({
       ok: true,
@@ -48,12 +54,6 @@ export async function POST(req: Request) {
       message: "Key saved.",
     });
   } catch (err) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: err instanceof Error ? err.message : "Failed to save API key",
-      },
-      { status: 500 },
-    );
+    return serverError("Failed to save API key", err, { ok: false });
   }
 }

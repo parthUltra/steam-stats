@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import { readJsonFile, updateJsonFile } from "@/lib/data/json-store";
 import { dataPath, ensureDataDir } from "@/lib/data/load-local";
 import { normTitle, titlesSoftMatch } from "@/lib/analytics/acquisition";
 import {
@@ -27,37 +27,49 @@ export type GiftsReceivedStore = {
   gifts: ReceivedGiftRecord[];
 };
 
-async function readStore(): Promise<GiftsReceivedStore> {
-  await ensureDataDir();
-  try {
-    const raw = await fs.readFile(dataPath(FILE), "utf8");
-    const parsed = JSON.parse(raw) as GiftsReceivedStore;
-    return {
-      updatedAt: parsed.updatedAt ?? "",
-      lastMailSyncedAt: parsed.lastMailSyncedAt,
-      gifts: Array.isArray(parsed.gifts) ? parsed.gifts : [],
-    };
-  } catch {
-    return { updatedAt: "", gifts: [] };
-  }
+function normalizeStore(
+  parsed: Partial<GiftsReceivedStore> | undefined,
+): GiftsReceivedStore {
+  return {
+    updatedAt: parsed?.updatedAt ?? "",
+    lastMailSyncedAt: parsed?.lastMailSyncedAt,
+    gifts: Array.isArray(parsed?.gifts) ? parsed.gifts : [],
+  };
 }
 
-async function writeStore(store: GiftsReceivedStore) {
+/**
+ * Locked read-modify-write with an atomic replace (previous file kept as
+ * `.bak`). `change` always sees what is on disk right now, so the Gmail sync
+ * and an API call cannot overwrite each other. Throws — writing nothing — if
+ * the file exists but is corrupt.
+ */
+async function updateStore(
+  change: (current: GiftsReceivedStore) => GiftsReceivedStore,
+): Promise<GiftsReceivedStore> {
   await ensureDataDir();
-  await fs.writeFile(dataPath(FILE), JSON.stringify(store, null, 2));
+  return updateJsonFile<GiftsReceivedStore>(
+    dataPath(FILE),
+    (disk) => change(normalizeStore(disk)),
+    { backup: true },
+  );
 }
 
+/**
+ * Missing file → no gifts. A file that exists but cannot be parsed throws
+ * `CorruptJsonFileError`: imported gifts are the owner's data, so they are
+ * never silently replaced by an empty list.
+ */
 export async function loadReceivedGifts(): Promise<GiftsReceivedStore> {
-  return readStore();
+  return normalizeStore(
+    await readJsonFile<GiftsReceivedStore>(dataPath(FILE)),
+  );
 }
 
 export async function clearReceivedGifts(): Promise<GiftsReceivedStore> {
-  const empty: GiftsReceivedStore = {
+  return updateStore(() => ({
     updatedAt: new Date().toISOString(),
     gifts: [],
-  };
-  await writeStore(empty);
-  return empty;
+  }));
 }
 
 function mergeGift(
@@ -116,18 +128,19 @@ export async function importReceivedGiftsFromText(
     // keep existing store but still allow caller to proceed
   }
 
-  const current = await readStore();
-  let gifts = [...current.gifts];
-  const before = gifts.length;
-  for (const g of parsed) {
-    gifts = mergeGift(gifts, g);
-  }
-  const store: GiftsReceivedStore = {
-    updatedAt: new Date().toISOString(),
-    lastMailSyncedAt: opts?.lastMailSyncedAt ?? current.lastMailSyncedAt,
-    gifts,
-  };
-  await writeStore(store);
+  let before = 0;
+  const store = await updateStore((current) => {
+    let gifts = [...current.gifts];
+    before = gifts.length;
+    for (const g of parsed) {
+      gifts = mergeGift(gifts, g);
+    }
+    return {
+      updatedAt: new Date().toISOString(),
+      lastMailSyncedAt: opts?.lastMailSyncedAt ?? current.lastMailSyncedAt,
+      gifts,
+    };
+  });
   return {
     store,
     added: store.gifts.length - before,
@@ -136,12 +149,9 @@ export async function importReceivedGiftsFromText(
 }
 
 export async function markMailSynced(at = new Date().toISOString()) {
-  const current = await readStore();
-  const store: GiftsReceivedStore = {
+  return updateStore((current) => ({
     ...current,
     updatedAt: current.updatedAt || at,
     lastMailSyncedAt: at,
-  };
-  await writeStore(store);
-  return store;
+  }));
 }

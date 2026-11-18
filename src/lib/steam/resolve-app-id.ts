@@ -1,12 +1,5 @@
 import { stripEditionSuffix } from "@/lib/analytics/edition-packs";
-
-function norm(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/™|®/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+import { isSequelRemainder, normTitle as norm } from "@/lib/titles";
 
 /** Extra SKU noise beyond Complete/GOTY-style edition packs. */
 function stripSkuNoise(title: string): string {
@@ -36,12 +29,16 @@ function loose(title: string): string {
     .trim();
 }
 
-/** True when `full` is the same title or an extended edition of `short`. */
+/**
+ * True when `full` is the same title or an extended edition of `short`.
+ * A sequel is not an extension: "Portal" does not extend to "Portal 2".
+ */
 function isTitleExtension(shortKey: string, fullTitle: string): boolean {
   const full = norm(fullTitle);
   const short = norm(shortKey);
   if (full.length < short.length || short.length < 3) return false;
   if (full === short) return true;
+  if (isSequelRemainder(full.slice(short.length))) return false;
   return (
     full.startsWith(`${short}:`) ||
     full.startsWith(`${short} -`) ||
@@ -106,7 +103,18 @@ export function resolveSteamAppId(
   for (const s of usable) {
     const t = norm(s.title);
     if (key.length < 8 || t.length < key.length) continue;
-    if (t.includes(key) || loose(s.title).includes(looseKey)) {
+    const at = t.indexOf(key);
+    if (at >= 0 && isSequelRemainder(t.slice(at + key.length))) continue;
+    const looseTitle = loose(s.title);
+    const looseAt = looseTitle.indexOf(looseKey);
+    if (
+      at < 0 &&
+      looseAt >= 0 &&
+      isSequelRemainder(looseTitle.slice(looseAt + looseKey.length))
+    ) {
+      continue;
+    }
+    if (at >= 0 || looseAt >= 0) {
       if (!best || t.length > best.len) {
         best = { id: s.steamAppId!, len: t.length };
       }

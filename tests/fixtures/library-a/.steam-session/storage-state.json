@@ -1,0 +1,11 @@
+{
+  "cookies": [
+    {
+      "name": "steamLoginSecure",
+      "value": "76561197960265728%7C%7CCANARY-STEAM-TOKEN",
+      "domain": "store.steampowered.com",
+      "path": "/"
+    }
+  ],
+  "origins": []
+}

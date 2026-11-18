@@ -4,21 +4,16 @@
  *
  * Usage: npm run fetch:owned-games
  */
-import fs from "node:fs/promises";
-import path from "node:path";
+import { safeErrorMessage } from "../src/lib/data/redact";
 import { fetchOwnedGamesFromSteamSession } from "../src/lib/steam/owned-games";
+import {
+  ownedGamesSnapshotPath,
+  saveOwnedGamesSnapshot,
+  savedLibraryExists as existingLibraryExists,
+} from "../src/lib/steam/owned-games-store";
 
-const OUT = path.resolve(__dirname, "..", "samples", "parsed", "games-played.json");
-
-async function existingLibraryExists(): Promise<boolean> {
-  try {
-    const raw = await fs.readFile(OUT, "utf8");
-    const parsed = JSON.parse(raw) as { games?: unknown[] };
-    return Array.isArray(parsed.games) && parsed.games.length > 0;
-  } catch {
-    return false;
-  }
-}
+// Same data root as every reader (honours STEAM_STATS_ROOT).
+const OUT = ownedGamesSnapshotPath();
 
 async function main() {
   let result;
@@ -29,7 +24,7 @@ async function main() {
       console.warn(
         "Owned-games refresh failed; keeping the last saved library.",
       );
-      console.warn(err instanceof Error ? err.message : err);
+      console.warn(safeErrorMessage(err));
       process.exit(0);
     }
     throw err;
@@ -48,14 +43,13 @@ async function main() {
     process.exit(1);
   }
 
-  await fs.mkdir(path.dirname(OUT), { recursive: true });
-  const payload = {
-    steamId: result.steamId,
-    source: "steam-session-api",
-    fetchedAt: new Date().toISOString(),
-    games: result.games,
-  };
-  await fs.writeFile(OUT, JSON.stringify(payload, null, 2), "utf8");
+  // Atomic write; an empty answer never replaces a saved non-empty library
+  // (Steam returns 200 with no games for an expired token / private profile).
+  const saved = await saveOwnedGamesSnapshot(result);
+  if (!saved.written) {
+    console.warn(saved.reason);
+    process.exit(0);
+  }
 
   const hours = result.games.reduce((s, g) => s + g.hoursForever, 0);
   const played = result.games.filter((g) => g.hoursForever > 0).length;
@@ -75,9 +69,10 @@ main().catch(async (err) => {
     console.warn(
       "Owned-games refresh failed; keeping the last saved library.",
     );
-    console.warn(err instanceof Error ? err.message : err);
+    console.warn(safeErrorMessage(err));
     process.exit(0);
   }
-  console.error(err);
+  // message only: never dump an error object that could carry a request URL
+  console.error(safeErrorMessage(err));
   process.exit(1);
 });

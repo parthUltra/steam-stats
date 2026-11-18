@@ -1,0 +1,228 @@
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Steam charcoal — the app always runs dark, so these are the only values. */
+  --background: #06080c;
+  --foreground: #eef3f8;
+  --card: #0e141c;
+  --card-foreground: #eef3f8;
+  --popover: #121a24;
+  --popover-foreground: #eef3f8;
+  --primary: #66c0f4;
+  --primary-foreground: #061018;
+  --secondary: #1b2838;
+  --secondary-foreground: #eef3f8;
+  --muted: #121a24;
+  --muted-foreground: #8b9aab;
+  --accent: #162230;
+  --accent-foreground: #66c0f4;
+  --destructive: #ff6b8a;
+  --border: #1e2a38;
+  --input: #243447;
+  --ring: #66c0f4;
+  --chart-1: #66c0f4;
+  --chart-2: #3ee0d5;
+  --chart-3: #ffb347;
+  --chart-4: #b8ff5c;
+  --chart-5: #ff6b8a;
+  --radius: 0.75rem;
+  --sidebar: #0e141c;
+  --sidebar-foreground: #eef3f8;
+  --sidebar-primary: #66c0f4;
+  --sidebar-primary-foreground: #061018;
+  --sidebar-accent: #1b2838;
+  --sidebar-accent-foreground: #eef3f8;
+  --sidebar-border: #1e2a38;
+  --sidebar-ring: #66c0f4;
+
+  /* Aliases used by feature CSS */
+  --bg: var(--background);
+  --bg-elev: var(--card);
+  --bg-soft: #121a24;
+  --line: var(--border);
+  --line-hot: #2a3f55;
+  --text: var(--foreground);
+  --steam: #66c0f4;
+  --cyan: #3ee0d5;
+  --amber: #ffb347;
+  --rose: #ff6b8a;
+  --volt: #b8ff5c;
+
+  /* Steam Mist: secondary text that must stay brighter than Muted Fog. */
+  --steam-mist: #c7d5e0;
+
+  /* Artwork wells: lighter than Panel so unloaded art reads as a slot, not a hole. */
+  --art-well: #1a2532;
+  --art-well-line: #2b3c50;
+  --radius-art: 6px;
+
+  /* Type roles (12px floor). */
+  --text-label: 0.75rem;
+  --text-small: 0.8125rem;
+  --text-body: 0.95rem;
+  --text-title: 1.1rem;
+  --text-headline: 1.25rem;
+  --text-metric: 1.25rem;
+
+  /* Shell */
+  --shell-gutter: 1rem;
+  --shell-max: 1280px;
+  --shell-max-wide: 1680px;
+  --app-bar-h: 56px;
+
+  /* Elevation */
+  --shadow-chrome: 0 18px 50px rgba(0, 0, 0, 0.35);
+  --shadow-panel: 0 12px 36px rgba(0, 0, 0, 0.25);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+html {
+  /* Anchors and focus targets clear the sticky app bar. */
+  scroll-padding-top: calc(var(--app-bar-h) + 0.75rem);
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  background: var(--bg);
+  position: relative;
+  isolation: isolate;
+}
+
+h1,
+h2,
+h3,
+.cph-blended strong {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Static atmosphere: two soft washes behind the shell. */
+.ambient {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+}
+
+.ambient-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.32;
+}
+
+.ambient-orb-a {
+  width: 48vw;
+  height: 48vw;
+  max-width: 620px;
+  max-height: 620px;
+  top: -12%;
+  left: -8%;
+  background: radial-gradient(circle, rgba(102, 192, 244, 0.35), transparent 68%);
+}
+
+.ambient-orb-b {
+  width: 42vw;
+  height: 42vw;
+  max-width: 520px;
+  max-height: 520px;
+  right: -10%;
+  top: 18%;
+  background: radial-gradient(circle, rgba(255, 179, 71, 0.16), transparent 70%);
+}
+
+.mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+/* Content column. `data-wide` lets the Library use large screens. */
+.shell {
+  width: min(var(--shell-max), calc(100% - 2 * var(--shell-gutter)));
+  margin: 0 auto;
+  position: relative;
+}
+
+.shell[data-wide="true"] {
+  width: min(var(--shell-max-wide), calc(100% - 2 * var(--shell-gutter)));
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+
+  /* One focus indicator for every plain link, button and custom control.
+     In the base layer so component utilities (ring styles) can replace it. */
+  :where(a, button, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  :where([tabindex="-1"]):focus-visible {
+    outline: none;
+  }
+}

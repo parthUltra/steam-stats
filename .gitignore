@@ -46,10 +46,17 @@ yarn-error.log*
 !.env.example
 
 # Steam session cookies (never commit)
-.steam-session/
-.gmail-session/
-.itad-session/
-.price-refresh/
+/.steam-session/
+/.gmail-session/
+/.itad-session/
+/.price-refresh/
+
+# Throwaway data root for the browser test gate
+/.test-root/
+
+# Playwright output
+/test-results/
+/playwright-report/
 
 # Raw Account Data / parsed fixtures (PII)
 samples/**

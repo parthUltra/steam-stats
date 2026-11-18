@@ -1,21 +1,48 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Outfit } from "next/font/google";
+import localFont from "next/font/local";
 import { DevLiveReload } from "@/components/DevLiveReload";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
+/*
+ * Fonts are committed under ./fonts (OFL, licence text beside each file) so the
+ * build never needs the network. Each file is the full variable font; one
+ * @font-face per weight keeps weight matching identical to the previous
+ * Google Fonts setup.
+ */
+
 /** UI + headings — hierarchy via weight/size. */
-const outfit = Outfit({
-  subsets: ["latin"],
+const outfit = localFont({
+  src: [
+    { path: "./fonts/Outfit-Variable.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/Outfit-Variable.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/Outfit-Variable.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/Outfit-Variable.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/Outfit-Variable.woff2", weight: "800", style: "normal" },
+  ],
   variable: "--font-sans",
-  weight: ["400", "500", "600", "700", "800"],
 });
 
 /** Playtime, money, KPIs. */
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin"],
+const jetbrains = localFont({
+  src: [
+    {
+      path: "./fonts/JetBrainsMono-Variable.woff2",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "./fonts/JetBrainsMono-Variable.woff2",
+      weight: "500",
+      style: "normal",
+    },
+    {
+      path: "./fonts/JetBrainsMono-Variable.woff2",
+      weight: "700",
+      style: "normal",
+    },
+  ],
   variable: "--font-mono",
-  weight: ["400", "500", "700"],
 });
 
 export const metadata: Metadata = {
@@ -34,12 +61,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       )}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
+        <a className="skip-link" href="#main">
+          Skip to content
+        </a>
         <DevLiveReload />
         <div className="ambient" aria-hidden>
           <span className="ambient-orb ambient-orb-a" />
           <span className="ambient-orb ambient-orb-b" />
         </div>
-        <div className="shell">{children}</div>
+        {children}
       </body>
     </html>
   );

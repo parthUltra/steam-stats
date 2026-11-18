@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP_URL="${STEAM_STATS_URL:-http://localhost:3000}"
+APP_URL="${STEAM_STATS_URL:-http://127.0.0.1:3000}"
 SKIP_PRICES="${STEAM_STATS_SKIP_PRICES:-0}"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -59,8 +59,17 @@ ok "Playwright Chromium ready"
 
 if [[ ! -f .env.local && -f .env.example ]]; then
   cp .env.example .env.local
-  info "Created .env.local from .env.example (optional STEAM_API_KEY)"
+  info "Created .env.local from .env.example (every setting in it is optional)"
 fi
+
+# Owner-only: API keys, session cookies, purchase history. Tightens what an
+# earlier version created world-readable; contents are not read.
+chmod 600 .env.local 2>/dev/null || true
+for private_dir in data samples .steam-session .gmail-session .itad-session .price-refresh; do
+  if [[ -d "$private_dir" ]]; then
+    chmod -R go-rwx "$private_dir" 2>/dev/null || true
+  fi
+done
 
 echo
 bold "Step 1/4 — Steam login & Account Data"
@@ -79,12 +88,15 @@ if ! npm run fetch:owned-games; then
   info "Owned-games refresh failed — using the last saved library if present."
 fi
 
+echo
+bold "Step 4/4 — Dashboard"
 if [[ "$SKIP_PRICES" != "1" ]]; then
-  echo
-  bold "Step 4/4 — Dashboard"
   info "Store lows refresh in the background if quotes are older than a week."
 else
-  info "Skipping price-refresh notice (STEAM_STATS_SKIP_PRICES=1)"
+  # The server reads this and does not start the automatic weekly refresh;
+  # the Refresh button in the app still works.
+  export STEAM_STATS_SKIP_PRICES=1
+  info "Automatic price refresh is off for this run (STEAM_STATS_SKIP_PRICES=1)."
 fi
 
 echo
@@ -105,7 +117,8 @@ if command -v lsof >/dev/null 2>&1; then
   fi
 fi
 
-npm run dev &
+# Loopback only — never expose purchase history to the LAN.
+npx next dev -H 127.0.0.1 &
 DEV_PID=$!
 
 cleanup() {

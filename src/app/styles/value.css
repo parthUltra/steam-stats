@@ -1,0 +1,1597 @@
+/*
+ * Value tab. One bordered surface per board; everything inside a board is
+ * flat and separated by hairlines. Colour carries meaning only:
+ *   amber = paid, cyan = shelf now, mist = all-time low.
+ * Steam blue is reserved for controls, focus and selection.
+ */
+
+.value-tab {
+  /* Local tokens (not in tokens.css yet). */
+  --v-low: #c7d5e0; /* Steam Mist: the all-time-low series */
+  --v-well: #1a2533; /* image well and bar tracks: lighter than a row */
+  --v-well-line: #2a3b4e; /* image well border */
+  --v-row-hover: rgba(199, 213, 224, 0.04);
+  --v-row-h: 36px;
+  --v-pad-x: 1.25rem;
+  --v-text-sm: 0.875rem; /* 14px: tables and supporting copy */
+  --v-text-xs: 0.75rem; /* 12px: the floor */
+
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+/* —— Board —— */
+
+.v-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-elev);
+}
+
+.v-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 2rem;
+  padding: 1.1rem var(--v-pad-x) 0.9rem;
+}
+
+.v-panel-head > div:first-child {
+  flex: 1 1 22rem;
+  min-width: 0;
+}
+
+.v-panel-head h2,
+.v-panel-head h3 {
+  margin: 0;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.v-panel-head h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.v-panel-head h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.v-panel-head p {
+  margin: 0.3rem 0 0;
+  max-width: 68ch;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm);
+  line-height: 1.5;
+}
+
+.v-panel-foot {
+  padding: 0.8rem var(--v-pad-x);
+  border-top: 1px solid var(--line);
+}
+
+.value-tab .mono,
+.v-dialog .mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.v-low {
+  color: var(--v-low, #c7d5e0);
+}
+
+.v-quiet {
+  color: var(--muted-foreground);
+}
+
+.v-strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.v-error {
+  color: var(--rose);
+}
+
+.v-empty {
+  margin: 0;
+  padding: 0.25rem var(--v-pad-x) 1.1rem;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm);
+  line-height: 1.5;
+}
+
+/* One focus treatment for every bespoke control. shadcn controls keep their ring. */
+.value-tab :where(a, button, summary, [tabindex]):not([data-slot]):focus-visible,
+.v-dialog :where(a, button, [tabindex]):not([data-slot]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Segmented toggles: same treatment as the Library's, so pressed is visible. */
+.value-tab [data-slot="toggle-group-item"] {
+  height: 2rem;
+  padding-inline: 0.7rem;
+  font-size: var(--text-small);
+  color: var(--steam-mist);
+}
+
+.value-tab [data-slot="toggle-group-item"][aria-pressed="true"] {
+  border-color: color-mix(in oklab, var(--steam) 50%, var(--line));
+  background: color-mix(in oklab, var(--steam) 16%, var(--card));
+  color: var(--foreground);
+}
+
+/* A pressed segment keeps its own left edge inside the joined group. */
+.value-tab [data-slot="toggle-group-item"][aria-pressed="true"] + [data-slot="toggle-group-item"] {
+  border-left-color: color-mix(in oklab, var(--steam) 50%, var(--line));
+}
+
+/* —— Summary: three totals on one scale —— */
+
+.v-verdict {
+  color: var(--text) !important;
+  font-size: 0.95rem !important;
+}
+
+.v-verdict strong {
+  font-weight: 600;
+}
+
+.v-totals {
+  list-style: none;
+  margin: 0;
+  padding: 0 calc(var(--v-pad-x) - 0.6rem);
+}
+
+.v-total {
+  display: grid;
+  grid-template-columns: 11.5rem minmax(0, 1fr) 9.5rem 1rem;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  min-height: 52px;
+  padding: 0.35rem 0.6rem;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.v-total:hover {
+  background: var(--v-row-hover);
+}
+
+.v-total-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.v-total-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.v-total-note {
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.35;
+}
+
+.v-total-track {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--v-well);
+}
+
+.v-total-fill {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 999px;
+  background: var(--tone);
+}
+
+/* Reference line at "paid", drawn through all three tracks. */
+.v-total-track::after {
+  content: "";
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: var(--paid-pct);
+  width: 1px;
+  background: color-mix(in oklab, var(--text) 55%, transparent);
+}
+
+.v-total[data-tone="paid"] {
+  --tone: var(--amber);
+}
+
+.v-total[data-tone="now"] {
+  --tone: var(--cyan);
+}
+
+.v-total[data-tone="low"] {
+  --tone: var(--v-low);
+}
+
+.v-total-num {
+  color: var(--tone);
+  font-size: 1.5rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.v-total-go {
+  width: 1rem;
+  height: 1rem;
+  color: var(--muted-foreground);
+}
+
+.v-total:hover .v-total-go {
+  color: var(--steam);
+}
+
+.v-summary-key {
+  margin: 0.35rem 0 0;
+  padding: 0 var(--v-pad-x) 0.9rem;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.5;
+}
+
+.v-summary-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+}
+
+.v-switch-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  color: var(--text);
+  font-size: var(--v-text-sm);
+}
+
+.v-switch-row .glossary-hint {
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+}
+
+/* —— Lows coverage / refresh —— */
+
+.v-lows {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem 0.9rem;
+  margin-left: auto;
+}
+
+.v-lows-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem 0.9rem;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.5;
+}
+
+.v-lows-coverage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.v-lows-meter {
+  display: inline-block;
+  width: 72px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--v-well);
+}
+
+.v-lows-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--v-low);
+}
+
+.v-lows-live:empty {
+  display: none;
+}
+
+/* —— Data notice: the one inline data-quality pattern —— */
+
+.v-notice {
+  margin: 0 var(--v-pad-x) 0.9rem;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--v-well) 55%, transparent);
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.5;
+}
+
+.v-notice > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 32px;
+  padding: 0.3rem 0.65rem;
+  border-radius: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.v-notice > summary::-webkit-details-marker {
+  display: none;
+}
+
+.v-notice > summary:hover {
+  color: var(--text);
+}
+
+.v-notice-icon,
+.v-notice-chevron {
+  flex: none;
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.v-notice-line {
+  flex: 1;
+  min-width: 0;
+  color: var(--v-low);
+}
+
+.v-notice-chevron {
+  transition: transform 0.15s ease;
+}
+
+.v-notice[open] .v-notice-chevron {
+  transform: rotate(180deg);
+}
+
+.v-notice-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.15rem 0.65rem 0.7rem 2.05rem;
+  list-style: none;
+  max-width: 78ch;
+}
+
+.v-notice-list strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.v-notice-fix {
+  color: var(--v-low);
+}
+
+/* —— Disclosure row inside a board: label, one-line answer, chevron —— */
+
+.v-disclosure {
+  border-top: 1px solid var(--line);
+}
+
+.v-disclosure > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.2rem 1rem;
+  min-height: 44px;
+  padding: 0.7rem var(--v-pad-x);
+  cursor: pointer;
+  list-style: none;
+}
+
+.v-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.v-disclosure > summary:hover {
+  background: var(--v-row-hover);
+}
+
+.v-disclosure-title {
+  font-size: var(--v-text-sm);
+  font-weight: 600;
+}
+
+.v-disclosure-line {
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm);
+  line-height: 1.5;
+}
+
+.v-disclosure-chevron {
+  align-self: center;
+  width: 1rem;
+  height: 1rem;
+  color: var(--muted-foreground);
+  transition: transform 0.15s ease;
+}
+
+.v-disclosure[open] > summary .v-disclosure-chevron {
+  transform: rotate(180deg);
+}
+
+.v-disclosure-body {
+  min-width: 0;
+  padding: 0.35rem var(--v-pad-x) 1rem;
+}
+
+/* A closed disclosure still lays out its hidden table; never let it widen the page. */
+.v-disclosure {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.v-disclosure-body > .v-table {
+  margin: 0 -0.6rem;
+  width: calc(100% + 1.2rem);
+}
+
+.v-disclosure-note {
+  margin: 0.6rem 0 0;
+  max-width: 80ch;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.5;
+}
+
+/* Purchase cohorts */
+.v-table .v-cohort-year {
+  width: 5.5rem;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: 500;
+  text-align: left;
+}
+
+.v-cohort-played {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  white-space: nowrap;
+}
+
+.v-cohort-meter {
+  flex: none;
+  width: 7rem;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--v-well);
+}
+
+.v-cohort-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--v-low) 70%, var(--v-well));
+}
+
+/* —— Tables —— */
+
+.v-table-wrap {
+  padding: 0 calc(var(--v-pad-x) - 0.6rem) 0.5rem;
+}
+
+.v-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--v-text-sm);
+}
+
+.v-table th,
+.v-table td {
+  height: var(--v-row-h);
+  padding: 0 0.6rem;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  font-weight: 400;
+  /* Undo the global th treatment (uppercase, tracking, filled band). */
+  background: none;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.v-table thead th {
+  height: 32px;
+  border-top: 0;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.v-table tbody tr:hover > * {
+  background: var(--v-row-hover);
+}
+
+.v-table .v-num {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.v-table thead .v-num {
+  font-family: inherit;
+}
+
+/* The title column takes the slack and truncates instead of widening the table. */
+.v-cell-title {
+  width: 100%;
+  max-width: 0;
+}
+
+.v-title {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.v-title > a,
+.v-title > span:not(.v-thumb):not(.v-tag) {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v-title > a:hover {
+  color: var(--steam);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.v-tag {
+  flex: none;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--line-hot);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.v-col-date,
+.v-col-day {
+  white-space: nowrap;
+}
+
+.v-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 28px;
+  margin: 0 -0.35rem;
+  padding: 0 0.35rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.v-sort:hover,
+.v-sort.is-active {
+  color: var(--text);
+}
+
+.v-sort svg {
+  width: 0.8rem;
+  height: 0.8rem;
+  opacity: 0.55;
+}
+
+.v-sort.is-active svg {
+  color: var(--steam);
+  opacity: 1;
+}
+
+/* Image well: visibly a placeholder before (or without) art. */
+.v-thumb {
+  flex: none;
+  display: block;
+  width: 64px;
+  height: 24px;
+  overflow: hidden;
+  border: 1px solid var(--v-well-line, #2a3b4e);
+  border-radius: 3px;
+  background: var(--v-well, #1a2533);
+}
+
+.v-thumb > img,
+.v-thumb > .steam-art-fallback {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: cover;
+}
+
+.v-thumb > .steam-art-fallback {
+  display: grid;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  font-weight: 600;
+}
+
+/* —— Spend over time —— */
+
+.v-chart {
+  --axis-w: 3rem;
+  display: grid;
+  grid-template-columns: var(--axis-w) minmax(0, 1fr);
+  padding: 0.5rem var(--v-pad-x) 0.25rem;
+}
+
+.v-chart-axis {
+  position: relative;
+  height: 176px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--v-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.v-chart-axis > span {
+  position: absolute;
+  right: 0.5rem;
+  transform: translateY(50%);
+  line-height: 1;
+}
+
+.v-chart-plot {
+  position: relative;
+  height: 176px;
+  border-bottom: 1px solid var(--line-hot);
+}
+
+.v-chart-grid {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.v-chart-bars,
+.v-chart-months,
+.v-chart-years {
+  display: grid;
+  grid-template-columns: repeat(var(--n), minmax(0, 1fr));
+}
+
+.v-chart-bars {
+  position: absolute;
+  inset: 0;
+}
+
+.v-bar {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.v-bar[data-empty] {
+  cursor: default;
+}
+
+/* Year rule: runs from the plot down through the month letters. */
+.v-bar[data-year-start]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--line-hot);
+}
+
+.v-bar-fill {
+  width: min(72%, 22px);
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in oklab, var(--amber) 78%, var(--bg-elev));
+}
+
+/* Gap month: a baseline tick, so "no purchases" is visible rather than blank. */
+.v-bar[data-empty] .v-bar-fill {
+  width: 3px;
+  height: 3px;
+  min-height: 0;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--line-hot);
+}
+
+.v-bar:not([data-empty]):hover,
+.v-bar:focus-visible {
+  background: var(--v-row-hover);
+}
+
+.v-bar:not([data-empty]):hover .v-bar-fill,
+.v-bar[aria-pressed="true"] .v-bar-fill {
+  background: var(--amber);
+}
+
+.v-bar[aria-pressed="true"] {
+  background: color-mix(in oklab, var(--steam) 12%, transparent);
+  box-shadow: inset 0 -2px 0 var(--steam);
+}
+
+.value-tab .v-bar:focus-visible {
+  outline-offset: -2px;
+  border-radius: 3px;
+}
+
+/* Running-total view: a step line over the same month columns. */
+.v-chart-step {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.v-chart-step-line {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.v-chart-step-area {
+  fill: color-mix(in oklab, var(--amber) 12%, transparent);
+  stroke: none;
+}
+
+.v-chart[data-mode="total"] .v-bar-fill {
+  visibility: hidden;
+}
+
+.v-chart-cohort {
+  color: var(--muted-foreground);
+}
+
+/* Sits inside the plot's top band so it never covers the board heading. */
+.v-chart-tip {
+  position: absolute;
+  top: 2px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  padding: 0.35rem 0.6rem;
+  transform: translateX(-50%);
+  border: 1px solid var(--line-hot);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.v-chart-tip[data-edge="start"] {
+  transform: translateX(-12px);
+}
+
+.v-chart-tip[data-edge="end"] {
+  transform: translateX(calc(-100% + 12px));
+}
+
+.v-chart-tip strong,
+.v-chart-tip .mono {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.v-chart-months,
+.v-chart-years {
+  grid-column: 2;
+}
+
+.v-chart-months {
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 22px;
+  text-align: center;
+}
+
+.v-chart-months > span[data-year-start],
+.v-chart-years > span + span {
+  box-shadow: inset 1px 0 0 var(--line-hot);
+}
+
+.v-chart-years > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.5rem;
+  min-width: 0;
+  padding: 0.1rem 0.5rem 0.5rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.v-chart-years strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.v-chart-years > span[data-narrow] > .mono {
+  display: none;
+}
+
+.v-month {
+  border-top: 1px solid var(--line);
+}
+
+.v-month-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  padding: 0.8rem var(--v-pad-x) 0.35rem;
+}
+
+.v-month-head h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.v-month-head p {
+  margin: 0.1rem 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm);
+  line-height: 1.5;
+}
+
+.v-month-nav {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.v-month-empty {
+  margin: 0;
+  padding: 0.8rem var(--v-pad-x);
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm);
+}
+
+/* —— Payment mix —— */
+
+.v-pay {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  font-size: var(--v-text-sm);
+}
+
+.v-pay h4 {
+  margin: 0;
+  font-size: var(--v-text-sm);
+  font-weight: 600;
+}
+
+.v-pay-bar {
+  display: flex;
+  flex: 0 1 220px;
+  gap: 2px;
+  min-width: 140px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.v-pay-bar > span,
+.v-pay-dot {
+  background: color-mix(
+    in oklab,
+    var(--steam) calc(var(--shade) * 100%),
+    var(--v-well)
+  );
+}
+
+.v-pay-bar > span {
+  min-width: 3px;
+}
+
+.v-pay-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v-pay-list li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+
+.v-pay-list .v-quiet {
+  font-size: var(--v-text-xs);
+}
+
+.v-pay-dot {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.v-spend-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem 2.5rem;
+  align-items: start;
+}
+
+.v-spend-foot > :only-child {
+  grid-column: 1 / -1;
+}
+
+.v-spend-foot .v-pay {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.6rem 1rem;
+}
+
+.v-spend-foot .v-pay-bar {
+  flex: none;
+  width: auto;
+  max-width: 320px;
+}
+
+.v-spend-foot .v-pay-list {
+  grid-column: 1 / -1;
+}
+
+.v-discount {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  font-size: var(--v-text-sm);
+}
+
+.v-discount h4 {
+  margin: 0;
+  font-size: var(--v-text-sm);
+  font-weight: 600;
+}
+
+.v-discount p {
+  margin: 0.3rem 0 0;
+  max-width: 44ch;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.5;
+}
+
+.v-discount-bins {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(5, 3.4rem);
+  gap: 0 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v-discount-bins li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.v-discount-count {
+  color: var(--text);
+  font-size: var(--v-text-xs);
+  line-height: 1.2;
+}
+
+.v-discount-bar {
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  height: 36px;
+  border-bottom: 1px solid var(--line-hot);
+}
+
+.v-discount-bar > span {
+  width: 100%;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in oklab, var(--steam) 62%, var(--v-well));
+}
+
+.v-discount-label {
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* —— Gifts —— */
+
+.v-gifts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.v-gifts-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.v-gifts-col + .v-gifts-col {
+  border-left: 1px solid var(--line);
+}
+
+.v-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+
+.v-figure-num {
+  font-size: 1.25rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.v-figure-cap {
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+}
+
+.v-table .v-group-row > * {
+  height: 32px;
+  background: color-mix(in oklab, var(--v-well) 45%, transparent);
+  color: var(--text);
+}
+
+.v-table .v-group-row > th {
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.v-group-name {
+  overflow-wrap: anywhere;
+}
+
+.v-group-count {
+  margin-left: 0.6rem;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.v-gifts-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  margin-top: auto;
+  padding: 0.8rem var(--v-pad-x);
+  border-top: 1px solid var(--line);
+}
+
+.v-gifts-sync-text {
+  color: var(--muted-foreground);
+  font-size: var(--v-text-xs);
+  line-height: 1.5;
+}
+
+/* —— Ledger disclosure —— */
+
+.v-ledger > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  padding: 0.95rem var(--v-pad-x);
+  border-radius: 13px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.v-ledger > summary::-webkit-details-marker {
+  display: none;
+}
+
+.v-ledger > summary:hover {
+  background: var(--v-row-hover);
+}
+
+.v-ledger-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.v-ledger-sub {
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm);
+}
+
+.v-ledger-chevron {
+  align-self: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--muted-foreground);
+  transition: transform 0.15s ease;
+}
+
+.v-ledger[open] .v-ledger-chevron {
+  transform: rotate(180deg);
+}
+
+.v-ledger-body {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 0 1rem;
+  padding: 0.5rem 0 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.v-ledger-body h3 {
+  margin: 0.75rem 0 0.4rem;
+  padding: 0 var(--v-pad-x);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.v-plain-list,
+.v-ledger-text {
+  margin: 0 0 0.5rem;
+  padding: 0 var(--v-pad-x);
+  max-width: 62ch;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm);
+  line-height: 1.55;
+}
+
+.v-plain-list {
+  display: grid;
+  gap: 0.3rem;
+  list-style: none;
+}
+
+.v-plain-list .mono,
+.v-ledger-text .mono {
+  color: var(--text);
+}
+
+/* —— Dialogs —— */
+
+.v-dialog-overlay,
+.itad-key-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(1.25rem, 8vh) 1rem 1.25rem;
+  overflow: auto;
+  background: color-mix(in oklab, #0a0c10 72%, transparent);
+  backdrop-filter: blur(4px);
+}
+
+.v-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(40rem, 100%);
+  max-height: min(84vh, 52rem);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  --v-low: #c7d5e0;
+  --v-well: #1a2533;
+  --v-well-line: #2a3b4e;
+  --v-row-hover: rgba(199, 213, 224, 0.04);
+  --v-row-h: 36px;
+  --v-pad-x: 1.25rem;
+  --v-text-sm: 0.875rem;
+  --v-text-xs: 0.75rem;
+}
+
+.v-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem var(--v-pad-x) 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.v-dialog-head h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.v-dialog-head h3 .mono {
+  margin-left: 0.4rem;
+  font-weight: 500;
+}
+
+.v-dialog-head p {
+  margin: 0.25rem 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm);
+  line-height: 1.5;
+}
+
+.v-dialog-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 calc(var(--v-pad-x) - 0.6rem) 0.5rem;
+  overscroll-behavior: contain;
+}
+
+.value-tab .v-dialog-scroll:focus-visible,
+.v-dialog .v-dialog-scroll:focus-visible {
+  outline-offset: -2px;
+}
+
+.v-inspect-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elev);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.v-inspect-table tbody tr:first-child > * {
+  border-top: 0;
+}
+
+.itad-key-card {
+  width: min(28rem, 100%);
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  padding: 1.15rem 1.25rem 1.2rem;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+
+.itad-key-card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.itad-key-steps {
+  margin: 0 0 0.85rem;
+  padding-left: 1.2rem;
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  display: grid;
+  gap: 0.45rem;
+  list-style: decimal;
+}
+
+.itad-key-note {
+  margin: 0 0 0.9rem;
+  color: var(--muted-foreground);
+  font-size: var(--v-text-sm, 0.875rem);
+  line-height: 1.45;
+}
+
+.itad-key-error {
+  margin: 0.55rem 0 0;
+  color: var(--rose);
+  font-size: var(--v-text-sm, 0.875rem);
+}
+
+.itad-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+
+/* —— Framed art used by SteamArt (shared with the Library) —— */
+
+.spend-thumb {
+  display: block;
+  border: 1px solid #2a3b4e;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #1a2533;
+}
+
+.spend-thumb.capsule {
+  width: 120px;
+  height: 45px;
+}
+
+.spend-thumb.portrait {
+  width: 56px;
+  height: 84px;
+}
+
+.spend-thumb-fallback {
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+/* —— Responsive —— */
+
+@media (max-width: 960px) {
+  .v-spend-foot {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v-chart-cohort {
+    display: none;
+  }
+
+  .v-gifts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v-gifts-col + .v-gifts-col {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .v-ledger-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v-total {
+    grid-template-columns: 9.5rem minmax(0, 1fr) 8.5rem 1rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .value-tab,
+  .v-dialog {
+    --v-pad-x: 0.9rem;
+  }
+
+  /* Label and number on one line, the bar beneath on the same shared scale. */
+  .v-total {
+    grid-template-columns: minmax(0, 1fr) auto 1rem;
+    grid-template-areas:
+      "label num go"
+      "track track track";
+    gap: 0.4rem 0.6rem;
+    padding: 0.6rem;
+  }
+
+  .v-total-label {
+    grid-area: label;
+  }
+
+  .v-total-num {
+    grid-area: num;
+    font-size: 1.3rem;
+  }
+
+  .v-total-go {
+    grid-area: go;
+  }
+
+  .v-total-track {
+    grid-area: track;
+    height: 10px;
+  }
+
+  .v-total-track::after {
+    top: -3px;
+    bottom: -3px;
+  }
+
+  .v-summary-foot,
+  .v-lows {
+    justify-content: flex-start;
+  }
+
+  .v-lows {
+    margin-left: 0;
+  }
+
+  .v-chart {
+    --axis-w: 2.4rem;
+  }
+
+  .v-chart-axis,
+  .v-chart-plot {
+    height: 148px;
+  }
+
+  .v-chart-months {
+    display: none;
+  }
+
+  .v-chart-years > span {
+    padding: 0.35rem 0.3rem 0.5rem;
+  }
+
+  .v-chart-years > span > .mono {
+    display: none;
+  }
+
+  .v-thumb {
+    width: 48px;
+    height: 18px;
+  }
+
+  .v-table th,
+  .v-table td {
+    padding: 0 0.4rem;
+  }
+
+  /* Narrow screens: a title wraps to two lines rather than truncating to a stub. */
+  .v-table td.v-cell-title {
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .v-title > a,
+  .v-title > span:not(.v-thumb):not(.v-tag) {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-height: 1.3;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+
+  .v-title {
+    gap: 0.5rem;
+  }
+
+  .v-figure {
+    align-items: flex-start;
+  }
+
+  .v-table-wrap,
+  .v-dialog-scroll {
+    padding-right: calc(var(--v-pad-x) - 0.4rem);
+    padding-left: calc(var(--v-pad-x) - 0.4rem);
+  }
+
+  .v-totals {
+    padding: 0 calc(var(--v-pad-x) - 0.6rem);
+  }
+
+  .v-month-table .v-col-date,
+  .v-month-table .v-col-list,
+  .v-cohort-table .v-cohort-wide {
+    display: none;
+  }
+
+  .v-cohort-meter {
+    display: none;
+  }
+
+  .v-disclosure > summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .v-disclosure-line {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .v-disclosure-chevron {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .v-discount {
+    flex-direction: column;
+  }
+
+  .v-discount-bins {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .v-ledger > summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .v-ledger-sub {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .v-ledger-chevron {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+
+/* Touch: every bespoke control reaches 44px in its tap dimension. */
+@media (pointer: coarse) {
+  .v-sort,
+  .v-notice > summary {
+    min-height: 44px;
+  }
+
+  .v-table {
+    --v-row-h: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .value-tab *,
+  .v-dialog * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

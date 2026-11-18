@@ -2,18 +2,27 @@ import type { LicenseRow, PurchaseHistoryRow } from "@/lib/account-data";
 import {
   buildAcquisitionIndex,
   classifyAcquisition,
-  normTitle,
   titlesSoftMatch,
   type AcquisitionKind,
 } from "@/lib/analytics/acquisition";
 import {
+  giftSentTitlesFromPurchases,
   isGiftPurchase,
+  isKeptGameItem,
   isTrackableGamePurchase,
   libraryTitlesForValuation,
   moneyOf,
+  purchaseParts,
   type SpendingAnalytics,
 } from "@/lib/analytics/spending";
-import { foldEditionPacksIntoBase, clearBundleShelfPrices, isRedundantPackSku } from "@/lib/analytics/edition-packs";
+import {
+  clearBundleShelfPrices,
+  foldEditionPacksIntoBase,
+  isRedundantPackSku,
+  mergeEditionIntoBase,
+  sumNullable,
+} from "@/lib/analytics/edition-packs";
+import { isGiftCardName, normTitle as norm } from "@/lib/titles";
 import type { GamePriceQuote, PriceCache } from "@/lib/pricing/prices";
 
 export type { AcquisitionKind } from "@/lib/analytics/acquisition";
@@ -37,6 +46,13 @@ export type ValuationGame = {
   giftedFrom?: string;
   /** Steam persona you gifted this to */
   giftedTo?: string;
+  /**
+   * When a gift reached you: the Steam licence date ("YYYY-MM-DD") or the gift
+   * e-mail's timestamp (ISO 8601). Absent when unknown.
+   */
+  receivedAt?: string;
+  /** When `lowest` was recorded (ISO 8601), if the price source said. */
+  lowestRecordedAt?: string;
 };
 
 export type ValueSlice = {
@@ -49,6 +65,7 @@ export type ValueSlice = {
 
 export type LibraryValuation = {
   currency: string;
+  /** 1 for a USD account, else null. Local prices are never derived from USD. */
   usdToDisplayRate: number | null;
   /**
    * What you paid for your library (never includes gifts you sent,
@@ -79,7 +96,23 @@ export type LibraryValuation = {
   ownershipGrantGames: ValuationGame[];
   /** Owned unpaid — origin unclear (not labeled as gifts) */
   unknownUnpaidGames: ValuationGame[];
+  /**
+   * Every title that was looked up without getting a store quote — including
+   * store SKUs later folded into a priced row and gifts sent. For "how many
+   * shelf titles have no price" use `shelfTitlesUnpriced` instead.
+   */
   unresolvedTitles: string[];
+  /**
+   * One consistent set of counts over the library rows that `shelfFull`
+   * actually sums (multi-game packs whose games are on the shelf excluded):
+   * `shelfTitles === shelfTitlesPriced + shelfTitlesUnpriced`.
+   * Priced = has a store price (or is a free title, worth 0).
+   */
+  shelfTitles: number;
+  shelfTitlesPriced: number;
+  shelfTitlesUnpriced: number;
+  /** Titles of the unpriced shelf rows, A–Z. */
+  shelfUnpricedTitles: string[];
   note: string;
   valveTotalSpend: number | null;
   valvePackageSpend: number | null;
@@ -101,10 +134,6 @@ export type LibraryValuation = {
   deltaCurrentVsLowest: number;
 };
 
-function norm(title: string) {
-  return normTitle(title);
-}
-
 function isUnpaidKind(kind: AcquisitionKind) {
   return (
     kind === "gifted_to_me" ||
@@ -120,10 +149,6 @@ function sortByShelfValue(games: ValuationGame[]) {
       (effectiveShelfNow(b) ?? 0) - (effectiveShelfNow(a) ?? 0) ||
       a.title.localeCompare(b.title),
   );
-}
-
-function isGiftCardName(name: string) {
-  return /gift card/i.test(name);
 }
 
 /** Cost basis for games you bought for yourself (not gifts). */
@@ -150,7 +175,7 @@ export function paidByTitle(
       const amountsByKey = new Map<string, number[]>();
       for (const line of row.lineItems) {
         if (line.amount == null || line.amount < 0) continue;
-        if (isGiftCardName(line.name)) continue;
+        if (!isKeptGameItem(row, line.name)) continue;
         const key = norm(line.name);
         const list = amountsByKey.get(key) ?? [];
         list.push(line.amount);
@@ -169,9 +194,10 @@ export function paidByTitle(
       continue;
     }
 
-    const amount = moneyOf(row);
+    // No line amounts: an even share per game (gift cards take their own share)
+    const amount = gift ? moneyOf(row) : purchaseParts(row).game;
     if (amount <= 0 || row.items.length === 0) continue;
-    const usable = row.items.filter((i) => !isGiftCardName(i));
+    const usable = row.items.filter((i) => isKeptGameItem(row, i));
     if (!usable.length) continue;
 
     const copiesByKey = new Map<string, number>();
@@ -192,64 +218,24 @@ export function paidByTitle(
   return map;
 }
 
-function median(values: number[]): number | null {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-export function inferUsdToDisplayRate(priceCache: PriceCache): number | null {
-  const ratios: number[] = [];
-  for (const q of Object.values(priceCache.quotes)) {
-    // Prefer retail local/USD when both exist — sale prices skew the FX ratio
-    if (
-      q.retailInr != null &&
-      q.retailInr > 0 &&
-      q.retailUsd != null &&
-      q.retailUsd > 0
-    ) {
-      const r = q.retailInr / q.retailUsd;
-      if (r > 0.05 && r < 500) ratios.push(r);
-      continue;
-    }
-    if (
-      q.currentUsd != null &&
-      q.currentUsd > 0 &&
-      q.currentInr != null &&
-      q.currentInr > 0
-    ) {
-      const r = q.currentInr / q.currentUsd;
-      if (r > 0.05 && r < 500) ratios.push(r);
-    }
-  }
-  return median(ratios);
-}
-
+/**
+ * Live store price in the display currency. Only the store's own quote is
+ * used: the display currency is the store currency (`currentInr`), or a USD
+ * account reads the genuine US-store amount. A local price is never derived
+ * from a USD one — the old "rate" was a regional price ratio, not FX.
+ */
 function quoteCurrentInCurrency(
   quote: GamePriceQuote,
   currency: string,
-  usdRate: number | null,
   storeCurrency: string,
 ): number | null {
-  let raw: number | null = null;
-  const storeCur = storeCurrency.toUpperCase();
   const displayCur = currency.toUpperCase();
-
-  if (displayCur === storeCur) {
-    if (quote.currentInr != null) raw = quote.currentInr;
-    else if (quote.currentUsd != null && usdRate != null) {
-      raw = quote.currentUsd * usdRate;
-    }
-  } else if (displayCur === "USD") {
-    raw = quote.currentUsd;
-  } else if (quote.currentUsd != null && usdRate != null) {
-    raw = quote.currentUsd * usdRate;
-  } else {
-    raw = quote.currentUsd;
-  }
+  const raw =
+    displayCur === storeCurrency.toUpperCase()
+      ? quote.currentInr
+      : displayCur === "USD"
+        ? (quote.usd?.current ?? null)
+        : null;
   // 0 / missing store price → treat as unlisted (show "—", fall back to low)
   if (raw == null || raw <= 0) return null;
   return raw;
@@ -259,7 +245,6 @@ function quoteLowestInCurrency(
   quote: GamePriceQuote,
   currency: string,
   currentLocal: number | null,
-  _usdRate: number | null,
   storeCurrency: string,
 ): number | null {
   // Only IsThereAnyDeal Steam store all-time low — never CheapShark / FX invent.
@@ -363,20 +348,6 @@ function findQuote(
   return exact;
 }
 
-function giftSentTitles(purchases: PurchaseHistoryRow[]): string[] {
-  const titles = new Set<string>();
-  for (const row of purchases) {
-    if (!isGiftPurchase(row) || row.refunded) continue;
-    const names = row.lineItems?.map((l) => l.name) ?? row.items ?? [];
-    for (const name of names) {
-      if (!name || isGiftCardName(name)) continue;
-      if (/^gift sent to\b/i.test(name)) continue;
-      titles.add(name);
-    }
-  }
-  return [...titles];
-}
-
 /** Norm title → Steam persona you gifted to (last wins if duplicates). */
 function giftSentRecipients(
   purchases: PurchaseHistoryRow[],
@@ -386,7 +357,10 @@ function giftSentRecipients(
     if (!isGiftPurchase(row) || row.refunded) continue;
     const to = row.giftRecipient?.trim();
     if (!to) continue;
-    const names = row.lineItems?.map((l) => l.name) ?? row.items ?? [];
+    // The parser always sets lineItems (possibly []), so test its length
+    const names = row.lineItems?.length
+      ? row.lineItems.map((l) => l.name)
+      : row.items;
     for (const name of names) {
       if (!name || isGiftCardName(name) || /^gift sent to\b/i.test(name)) {
         continue;
@@ -455,17 +429,19 @@ function priceGame(
   kind: AcquisitionKind,
   priceCache: PriceCache,
   currency: string,
-  usdRate: number | null,
   storeCurrency: string,
   unresolvedTitles: string[],
   acquisitionNote?: string,
-  giftPeople?: { giftedFrom?: string; giftedTo?: string },
+  giftPeople?: { giftedFrom?: string; giftedTo?: string; receivedAt?: string },
 ): ValuationGame {
   const quote = findQuote(priceCache, title);
   const isGift = kind === "gifted_by_me";
   const isUnpaidShelf = isUnpaidKind(kind);
   const giftedFrom = giftPeople?.giftedFrom;
   const giftedTo = giftPeople?.giftedTo;
+  const received = giftPeople?.receivedAt
+    ? { receivedAt: giftPeople.receivedAt }
+    : {};
 
   if (!quote || quote.source === "unresolved" || quote.steamAppId == null) {
     unresolvedTitles.push(quote?.title ?? title);
@@ -483,10 +459,11 @@ function priceGame(
       acquisitionNote,
       giftedFrom,
       giftedTo,
+      ...received,
     };
   }
 
-  const current = quoteCurrentInCurrency(quote, currency, usdRate, storeCurrency);
+  const current = quoteCurrentInCurrency(quote, currency, storeCurrency);
   // Free-to-keep titles: lowest is ₹0 (not market/live price)
   if (kind === "free") {
     return {
@@ -503,15 +480,16 @@ function priceGame(
       acquisitionNote,
       giftedFrom,
       giftedTo,
+      ...received,
     };
   }
 
-  let lowest = quoteLowestInCurrency(quote, currency, current, usdRate, storeCurrency);
+  let lowest = quoteLowestInCurrency(quote, currency, current, storeCurrency);
   if (lowest == null) {
     const related = relatedEditionIndiaLow(
       priceCache,
       quote.title || title,
-      normalizeQuoteKey(quote.title || title),
+      norm(quote.title || title),
     );
     if (related != null) {
       lowest =
@@ -545,11 +523,12 @@ function priceGame(
     acquisitionNote,
     giftedFrom,
     giftedTo,
+    ...received,
+    // Only when this row's low is the quote's own (not a related edition's)
+    ...(quote.lowestRecordedAt && lowest != null && lowest === quote.lowestInr
+      ? { lowestRecordedAt: quote.lowestRecordedAt }
+      : {}),
   };
-}
-
-function normalizeQuoteKey(title: string) {
-  return norm(title);
 }
 
 function acquisitionPriority(kind: AcquisitionKind): number {
@@ -561,7 +540,42 @@ function acquisitionPriority(kind: AcquisitionKind): number {
   return 0;
 }
 
-/** Collapse DLC / quote-title collisions onto one shelf row per app. */
+/**
+ * Rows whose cost basis is another row's purchase line (a soft match: the
+ * playtime title "Titanfall 2" vs the checkout line "Titanfall 2: Ultimate
+ * Edition") are the same game. Merge each into the row that owns the line so
+ * the amount is counted once and one shelf price is kept.
+ */
+function mergeSoftLinkedRows(
+  rows: { key: string; game: ValuationGame }[],
+  links: { key: string; ownerKey: string }[],
+): ValuationGame[] {
+  const byKey = new Map(rows.map((r) => [r.key, r.game]));
+  const mergedInto = new Map<string, string>();
+  const rootOf = (key: string) => {
+    let k = key;
+    while (mergedInto.has(k)) k = mergedInto.get(k)!;
+    return k;
+  };
+  for (const link of links) {
+    const from = rootOf(link.key);
+    const into = rootOf(link.ownerKey);
+    if (from === into) continue;
+    const a = byKey.get(from);
+    const b = byKey.get(into);
+    if (!a || !b) continue;
+    byKey.set(into, mergeEditionIntoBase(b, a));
+    byKey.delete(from);
+    mergedInto.set(from, into);
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Collapse DLC / quote-title collisions onto one shelf row per app.
+ * Paid is summed: each purchase line sits on exactly one row, so two rows that
+ * both carry paid are two purchases (a game and its DLC quoted as one app).
+ */
 function dedupeLibraryGames(games: ValuationGame[]): ValuationGame[] {
   const byApp = new Map<number, ValuationGame>();
   const unresolved: ValuationGame[] = [];
@@ -577,10 +591,7 @@ function dedupeLibraryGames(games: ValuationGame[]): ValuationGame[] {
     return {
       ...keep,
       title: preferTitle,
-      paid:
-        keep.kind === "purchased" || drop.kind === "purchased"
-          ? Math.max(keep.paid ?? 0, drop.paid ?? 0) || keep.paid || drop.paid
-          : keep.paid ?? drop.paid,
+      paid: sumNullable(keep.paid, drop.paid),
       current:
         keep.current != null && keep.current > 0
           ? keep.current
@@ -598,6 +609,7 @@ function dedupeLibraryGames(games: ValuationGame[]): ValuationGame[] {
       resolved: keep.resolved || drop.resolved,
       acquisitionNote: keep.acquisitionNote ?? drop.acquisitionNote,
       giftedFrom: keep.giftedFrom ?? drop.giftedFrom,
+      receivedAt: keep.receivedAt ?? drop.receivedAt,
       giftedTo: keep.giftedTo ?? drop.giftedTo,
     };
   };
@@ -625,10 +637,7 @@ function dedupeLibraryGames(games: ValuationGame[]): ValuationGame[] {
     } else if (gPri < pPri) {
       byApp.set(g.steamAppId, mergeRows(prev, g));
     } else if (g.kind === "purchased") {
-      byApp.set(g.steamAppId, mergeRows(
-        { ...prev, paid: Math.max(prev.paid ?? 0, g.paid ?? 0) },
-        g,
-      ));
+      byApp.set(g.steamAppId, mergeRows(prev, g));
     } else {
       // Same priority — keep the priced / better-titled row
       const keep =
@@ -643,11 +652,6 @@ function dedupeLibraryGames(games: ValuationGame[]): ValuationGame[] {
   }
 
   return [...byApp.values(), ...unresolved];
-}
-
-function sumNullable(a: number | null, b: number | null): number | null {
-  if (a == null && b == null) return null;
-  return (a ?? 0) + (b ?? 0);
 }
 
 function mergeIntoParent(parent: ValuationGame, dlc: ValuationGame): ValuationGame {
@@ -689,7 +693,12 @@ function mergeIntoParent(parent: ValuationGame, dlc: ValuationGame): ValuationGa
 
 /**
  * Fold DLC rows into their base game for spent / now / lowest / cost-hr.
- * Uses Steam fullgame parents, with title-prefix fallback.
+ *
+ * A row with a Steam app id folds only when Steam's DLC map (`dlcToParent`,
+ * from data/dlc-parents.json) names its parent — a title prefix is not
+ * evidence: "Hollow Knight: Silksong" and "Half-Life 2: Deathmatch" are games.
+ * A row with no app id cannot be looked up, so it alone falls back to the
+ * title, and only for the "Base - Add-on" naming Steam uses for DLC.
  */
 export function foldDlcIntoParents(
   games: ValuationGame[],
@@ -706,13 +715,6 @@ export function foldDlcIntoParents(
     byApp.set(g.steamAppId, g);
   }
 
-  const resolveParentId = (g: ValuationGame): number | null => {
-    if (g.steamAppId == null) return null;
-    const fromApi = dlcToParent.get(g.steamAppId);
-    if (fromApi != null && fromApi !== g.steamAppId) return fromApi;
-    return inferParentFromLibrary(g, [...byApp.values(), ...unresolved]);
-  };
-
   // Multi-pass in case we ever see nested relationships (rare)
   let changed = true;
   let guard = 0;
@@ -720,42 +722,23 @@ export function foldDlcIntoParents(
     changed = false;
     guard += 1;
     for (const [appId, g] of [...byApp.entries()]) {
-      const parentId = resolveParentId(g);
+      const parentId = dlcToParent.get(appId);
       if (parentId == null || parentId === appId) continue;
+      // Parent not on the shelf — keep the DLC row as it is
       const parent = byApp.get(parentId);
-      if (!parent) {
-        // Parent not in shelf — remint DLC under parent id so later merges work
-        // Keep DLC title until a real parent row exists; skip fold.
-        continue;
-      }
+      if (!parent) continue;
       byApp.set(parentId, mergeIntoParent(parent, g));
       byApp.delete(appId);
       changed = true;
     }
   }
 
-  // Title-prefix only for unresolved / leftover DLC without API parent in map
-  for (const [appId, g] of [...byApp.entries()]) {
-    if (dlcToParent.has(appId)) continue;
-    const parentId = inferParentFromLibrary(g, [...byApp.values()]);
-    if (parentId == null || parentId === appId) continue;
-    const parent = byApp.get(parentId);
-    if (!parent) continue;
-    byApp.set(parentId, mergeIntoParent(parent, g));
-    byApp.delete(appId);
-  }
-
-  // Unresolved rows (no Steam app id) still fold into a known parent by title
-  // e.g. "Brotato - Abyssal Terrors" → Brotato when price search failed.
+  // e.g. "Brotato - Abyssal Terrors" → Brotato when the price search failed
   const stillUnresolved: ValuationGame[] = [];
   for (const g of unresolved) {
-    const parentId = inferParentFromLibrary(g, [...byApp.values()]);
-    if (parentId == null) {
-      stillUnresolved.push(g);
-      continue;
-    }
-    const parent = byApp.get(parentId);
-    if (!parent) {
+    const parentId = inferAddOnParent(g, [...byApp.values()]);
+    const parent = parentId == null ? undefined : byApp.get(parentId);
+    if (parentId == null || !parent) {
       stillUnresolved.push(g);
       continue;
     }
@@ -765,24 +748,28 @@ export function foldDlcIntoParents(
   return [...byApp.values(), ...stillUnresolved];
 }
 
-function inferParentFromLibrary(
+/** Parent of an unpriced "Base - Add-on" row: the longest base title on the shelf. */
+function inferAddOnParent(
   game: ValuationGame,
   candidates: ValuationGame[],
 ): number | null {
   const key = norm(game.title);
   let best: { appId: number; len: number } | null = null;
   for (const c of candidates) {
-    if (c.steamAppId == null || c.steamAppId === game.steamAppId) continue;
+    if (c.steamAppId == null) continue;
     const p = norm(c.title);
     if (p.length < 4 || p === key) continue;
     if (
-      key.startsWith(`${p}:`) ||
-      key.startsWith(`${p} -`) ||
-      key.startsWith(`${p} –`)
+      !key.startsWith(`${p} -`) &&
+      !key.startsWith(`${p} –`) &&
+      !key.startsWith(`${p} —`)
     ) {
-      if (!best || p.length > best.len) {
-        best = { appId: c.steamAppId, len: p.length };
-      }
+      continue;
+    }
+    // An edition of the same game is the edition fold's job (it never sums prices)
+    if (titlesSoftMatch(c.title, game.title)) continue;
+    if (!best || p.length > best.len) {
+      best = { appId: c.steamAppId, len: p.length };
     }
   }
   return best?.appId ?? null;
@@ -801,12 +788,14 @@ export function buildLibraryValuation(
     mailGiftTitles?: string[];
     /** Steam persona who sent each mail gift (norm title → name) */
     mailGiftSenders?: Map<string, string>;
+    /** When each mail gift arrived (norm title → ISO 8601) */
+    mailGiftReceivedAt?: Map<string, string>;
   },
 ): LibraryValuation {
   const currency = spending.currency;
   const storeCurrency =
     priceCache.currency?.trim().toUpperCase() || currency.toUpperCase();
-  const usdRate = currency === "USD" ? 1 : inferUsdToDisplayRate(priceCache);
+  const displayIsUsd = currency.toUpperCase() === "USD";
 
   const libraryPaid = paidByTitle(purchases, { giftsOnly: false });
   const giftSentPaid = paidByTitle(purchases, { giftsOnly: true });
@@ -820,12 +809,16 @@ export function buildLibraryValuation(
       ...mailGiftTitles,
     ]),
   ];
-  const sentTitles = giftSentTitles(purchases);
+  const sentTitles = giftSentTitlesFromPurchases(purchases);
   const ownedKeys = new Set((opts?.ownedTitles ?? []).map(norm));
   const libraryTitleKeys = libraryTitles.map(norm);
   const acquisitionIndex = buildAcquisitionIndex(licenses, purchases);
 
-  const games: ValuationGame[] = [];
+  const libraryRows: { key: string; game: ValuationGame }[] = [];
+  // Rows whose cost basis is another row's purchase line (edition / SKU match)
+  const softLinks: { key: string; ownerKey: string }[] = [];
+  const libraryKeySet = new Set(libraryTitleKeys);
+  const claimedPurchaseLines = new Set<string>();
   const giftsSentGames: ValuationGame[] = [];
   const unresolvedTitles: string[] = [];
   const seenLib = new Set<string>();
@@ -836,18 +829,12 @@ export function buildLibraryValuation(
     seenLib.add(key);
 
     const quote = findQuote(priceCache, title);
+    const usdQuote = displayIsUsd && storeCurrency !== "USD";
     const priceHint = quote
       ? {
-          current:
-            currency.toUpperCase() === "USD" &&
-            storeCurrency !== "USD"
-              ? quote.currentUsd
-              : (quote.currentInr ?? quote.currentUsd),
-          retail:
-            currency.toUpperCase() === "USD" &&
-            storeCurrency !== "USD"
-              ? quote.retailUsd
-              : (quote.retailInr ?? quote.retailUsd),
+          current: usdQuote ? (quote.usd?.current ?? null) : quote.currentInr,
+          retail: usdQuote ? (quote.usd?.retail ?? null) : quote.retailInr,
+          isFree: quote.isFree,
         }
       : undefined;
 
@@ -871,22 +858,48 @@ export function buildLibraryValuation(
             ([k]) => titlesSoftMatch(k, title),
           )?.[1]
         : undefined;
+    const receivedAt =
+      classified.kind === "gifted_to_me"
+        ? (classified.receivedAt ??
+          opts?.mailGiftReceivedAt?.get(norm(title)) ??
+          [...(opts?.mailGiftReceivedAt?.entries() ?? [])].find(([k]) =>
+            titlesSoftMatch(k, title),
+          )?.[1])
+        : undefined;
 
-    games.push(
-      priceGame(
+    // One purchase line → one row. A soft match means the amount belongs to
+    // another title's checkout line: if that line has its own row, it keeps
+    // the money and this row is merged into it below; otherwise the first
+    // title to claim the line carries it.
+    let paid = classified.paid;
+    const ownerKey = classified.coveredBy;
+    if (classified.paidVia === "soft" && ownerKey) {
+      if (libraryKeySet.has(ownerKey) && ownerKey !== key) {
+        paid = null;
+        softLinks.push({ key, ownerKey });
+      } else if (claimedPurchaseLines.has(ownerKey)) {
+        paid = null;
+      } else {
+        claimedPurchaseLines.add(ownerKey);
+      }
+    }
+
+    libraryRows.push({
+      key,
+      game: priceGame(
         title,
-        classified.paid,
+        paid,
         classified.kind,
         priceCache,
         currency,
-        usdRate,
         storeCurrency,
         unresolvedTitles,
         classified.note,
-        giftedFrom ? { giftedFrom } : undefined,
+        giftedFrom || receivedAt ? { giftedFrom, receivedAt } : undefined,
       ),
-    );
+    });
   }
+  const games = mergeSoftLinkedRows(libraryRows, softLinks);
 
   const seenSent = new Set<string>();
   for (const title of sentTitles) {
@@ -904,7 +917,6 @@ export function buildLibraryValuation(
         "gifted_by_me",
         priceCache,
         currency,
-        usdRate,
         storeCurrency,
         unresolvedTitles,
         giftedTo ? `Gifted to ${giftedTo}` : undefined,
@@ -936,6 +948,17 @@ export function buildLibraryValuation(
 
   const shelfFull = sumShelf(merged, isLibrary);
   shelfFull.spent = spending.netSpent;
+
+  // The same rows sumShelf adds up, counted once.
+  const shelfRows = merged.filter(
+    (g) => isLibrary(g) && !isRedundantPackSku(g, merged),
+  );
+  const isPricedRow = (g: ValuationGame) =>
+    g.resolved && (g.kind === "free" || effectiveShelfNow(g) != null);
+  const shelfUnpricedTitles = shelfRows
+    .filter((g) => !isPricedRow(g))
+    .map((g) => g.title)
+    .sort((a, b) => a.localeCompare(b));
 
   const shelfPaidOnly = sumShelf(merged, isPaidShelf);
   shelfPaidOnly.spent = spending.netSpent;
@@ -969,15 +992,13 @@ export function buildLibraryValuation(
   const giftsReceived = sumShelf(giftsReceivedGames, () => true);
   giftsReceived.spent = 0;
 
-  const toDisplay = (usd: number | null | undefined) => {
-    if (usd == null) return null;
-    if (currency === "USD") return usd;
-    if (usdRate == null) return null;
-    return usd * usdRate;
-  };
+  // Valve reports these in USD. They are shown only on a USD account: there
+  // is no exchange rate here, and a regional price ratio is not one.
+  const toDisplay = (usd: number | null | undefined) =>
+    usd != null && displayIsUsd ? usd : null;
 
   const note =
-    "Spent is what you paid for your library. Shelf now values playable games only (not collections/bundles). Remasters and alternate editions fold into one row (remaster preferred — originals are not double-counted). Bundles attribute cost to included titles when the checkout lists the pack. Gifts received come from Steam Gift/Guest Pass and/or Gmail sync. DLC rolls into the base when both are owned. Lowest is the Steam store all-time low via IsThereAnyDeal, refreshed at most weekly and stored locally. Free titles count as 0 for lowest. Gifts you sent are separate.";
+    "Spent is what you paid for your library. Shelf now values playable games only (not collections/bundles). Remasters and alternate editions fold into one row (remaster preferred — originals are not double-counted). A collection / bundle keeps its price on the pack row; cost per hour splits it across the games it includes. Gifts received come from Steam Gift/Guest Pass and/or Gmail sync. DLC rolls into the base when both are owned and Steam lists it as that game's DLC. Lowest is the Steam store all-time low via IsThereAnyDeal, refreshed at most weekly and stored locally. Free titles count as 0 for lowest. Gifts you sent are separate.";
 
   // Back-compat: excludingGifts ≈ full library shelf; includingGifts ignored for heroes
   const excludingGifts = shelfFull;
@@ -992,7 +1013,7 @@ export function buildLibraryValuation(
 
   return {
     currency,
-    usdToDisplayRate: usdRate,
+    usdToDisplayRate: displayIsUsd ? 1 : null,
     librarySpent: spending.netSpent,
     shelfFull,
     shelfPaidOnly,
@@ -1008,6 +1029,10 @@ export function buildLibraryValuation(
     ownershipGrantGames,
     unknownUnpaidGames,
     unresolvedTitles,
+    shelfTitles: shelfRows.length,
+    shelfTitlesPriced: shelfRows.length - shelfUnpricedTitles.length,
+    shelfTitlesUnpriced: shelfUnpricedTitles.length,
+    shelfUnpricedTitles,
     note,
     valveTotalSpend: toDisplay(spending.valveSpendUsd.totalSpend),
     valvePackageSpend: toDisplay(spending.valveSpendUsd.packageOnlySpend),

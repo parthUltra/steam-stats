@@ -90,7 +90,18 @@ export function DevLiveReload() {
     return () => {
       closed = true;
       if (refreshTimer != null) window.clearTimeout(refreshTimer);
-      ws?.close();
+      const socket = ws;
+      if (!socket) return;
+      socket.onclose = null;
+      socket.onmessage = null;
+      if (socket.readyState === WebSocket.CONNECTING) {
+        // Closing a socket that is still connecting logs a console warning
+        // (Strict Mode unmounts this effect immediately); close once it opens.
+        socket.onopen = () => socket.close();
+        socket.onerror = () => undefined;
+      } else {
+        socket.close();
+      }
     };
   }, [router]);
 

@@ -380,7 +380,9 @@ export async function connectUserBrowser(
 
   const target = await resolveUserBrowser();
   const startUrl = opts.startUrl ?? "about:blank";
-  await fs.mkdir(opts.isolatedUserDataDir, { recursive: true });
+  // The profile holds a signed-in session: owner-only.
+  await fs.mkdir(opts.isolatedUserDataDir, { recursive: true, mode: 0o700 });
+  await fs.chmod(opts.isolatedUserDataDir, 0o700).catch(() => undefined);
 
   await emitStatus(
     opts,

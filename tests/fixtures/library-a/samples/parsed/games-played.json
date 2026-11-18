@@ -1,0 +1,447 @@
+{
+  "steamId": "76561197960265728",
+  "source": "steam-session-api",
+  "fetchedAt": "2026-10-15T12:00:00.000Z",
+  "games": [
+    {
+      "appId": 9000001,
+      "name": "Starfall Tactics",
+      "hoursForever": 412.5,
+      "hours2Weeks": null,
+      "lastPlayedText": "10/12/2026",
+      "lastPlayedAt": 1791829800000,
+      "minutesForever": 24750,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000002,
+      "name": "Emberwake",
+      "hoursForever": 286,
+      "hours2Weeks": null,
+      "lastPlayedText": "9/28/2026",
+      "lastPlayedAt": 1790611800000,
+      "minutesForever": 17160,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000038,
+      "name": "Skyline Brawl",
+      "hoursForever": 210,
+      "hours2Weeks": 3,
+      "lastPlayedText": "10/10/2026",
+      "lastPlayedAt": 1791659100000,
+      "minutesForever": 12600,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000003,
+      "name": "Hollow Circuit",
+      "hoursForever": 173.2,
+      "hours2Weeks": null,
+      "lastPlayedText": "8/19/2026",
+      "lastPlayedAt": 1787169900000,
+      "minutesForever": 10392,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000029,
+      "name": "Vesper Lines",
+      "hoursForever": 148.5,
+      "hours2Weeks": null,
+      "lastPlayedText": "6/21/2026",
+      "lastPlayedAt": 1782057300000,
+      "minutesForever": 8910,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000008,
+      "name": "Ironroot",
+      "hoursForever": 120,
+      "hours2Weeks": null,
+      "lastPlayedText": "7/4/2026",
+      "lastPlayedAt": 1783200600000,
+      "minutesForever": 7200,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000037,
+      "name": "Signal Kite",
+      "hoursForever": 110,
+      "hours2Weeks": null,
+      "lastPlayedText": "4/25/2026",
+      "lastPlayedAt": 1777150200000,
+      "minutesForever": 6600,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000004,
+      "name": "Paper Lanterns™",
+      "hoursForever": 96.4,
+      "hours2Weeks": null,
+      "lastPlayedText": "12/30/2025",
+      "lastPlayedAt": 1767123900000,
+      "minutesForever": 5784,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000014,
+      "name": "Kestrel Run",
+      "hoursForever": 90,
+      "hours2Weeks": 7,
+      "lastPlayedText": "10/14/2026",
+      "lastPlayedAt": 1792012500000,
+      "minutesForever": 5400,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000030,
+      "name": "Copper Sparrow",
+      "hoursForever": 74.5,
+      "hours2Weeks": null,
+      "lastPlayedText": "8/2/2025",
+      "lastPlayedAt": 1754157600000,
+      "minutesForever": 4470,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000017,
+      "name": "Quiet Harbor",
+      "hoursForever": 72,
+      "hours2Weeks": null,
+      "lastPlayedText": "9/6/2025",
+      "lastPlayedAt": 1757175900000,
+      "minutesForever": 4320,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000022,
+      "name": "Hollow Circuit: Overclock",
+      "hoursForever": 64,
+      "hours2Weeks": null,
+      "lastPlayedText": "9/12/2026",
+      "lastPlayedAt": 1789242000000,
+      "minutesForever": 3840,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000005,
+      "name": "Tidebreaker",
+      "hoursForever": 61.8,
+      "hours2Weeks": null,
+      "lastPlayedText": "6/14/2025",
+      "lastPlayedAt": 1749914400000,
+      "minutesForever": 3708,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000010,
+      "name": "Voidrunner 2",
+      "hoursForever": 52,
+      "hours2Weeks": null,
+      "lastPlayedText": "5/17/2026",
+      "lastPlayedAt": 1779044400000,
+      "minutesForever": 3120,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000041,
+      "name": "Aurora Crossing",
+      "hoursForever": 48,
+      "hours2Weeks": null,
+      "lastPlayedText": "8/30/2026",
+      "lastPlayedAt": 1788114600000,
+      "minutesForever": 2880,
+      "fromFamily": true
+    },
+    {
+      "appId": 9000006,
+      "name": "Glass Orchard",
+      "hoursForever": 44.1,
+      "hours2Weeks": null,
+      "lastPlayedText": "11/2/2024",
+      "lastPlayedAt": 1730566800000,
+      "minutesForever": 2646,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000024,
+      "name": "Lanternfall",
+      "hoursForever": 40,
+      "hours2Weeks": null,
+      "lastPlayedText": "11/23/2025",
+      "lastPlayedAt": 1763923500000,
+      "minutesForever": 2400,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000007,
+      "name": "Rustline Rally",
+      "hoursForever": 38.6,
+      "hours2Weeks": null,
+      "lastPlayedText": "3/21/2024",
+      "lastPlayedAt": 1711044900000,
+      "minutesForever": 2316,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000027,
+      "name": "Pyrewatch Eternal",
+      "hoursForever": 35,
+      "hours2Weeks": 5,
+      "lastPlayedText": "10/11/2026",
+      "lastPlayedAt": 1791750600000,
+      "minutesForever": 2100,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000031,
+      "name": "Thimblewood",
+      "hoursForever": 32.5,
+      "hours2Weeks": null,
+      "lastPlayedText": "1/8/2023",
+      "lastPlayedAt": 1673198700000,
+      "minutesForever": 1950,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000020,
+      "name": "Lumen Drift",
+      "hoursForever": 32,
+      "hours2Weeks": null,
+      "lastPlayedText": "3/30/2025",
+      "lastPlayedAt": 1743357900000,
+      "minutesForever": 1920,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000023,
+      "name": "Anvil Saga: The Complete Collection",
+      "hoursForever": 30,
+      "hours2Weeks": null,
+      "lastPlayedText": "12/15/2024",
+      "lastPlayedAt": 1734284100000,
+      "minutesForever": 1800,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000042,
+      "name": "Marrow Deep",
+      "hoursForever": 27,
+      "hours2Weeks": null,
+      "lastPlayedText": "10/19/2025",
+      "lastPlayedAt": 1760901900000,
+      "minutesForever": 1620,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000018,
+      "name": "Moss Kingdom",
+      "hoursForever": 25,
+      "hours2Weeks": null,
+      "lastPlayedText": "8/11/2024",
+      "lastPlayedAt": 1723389000000,
+      "minutesForever": 1500,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000011,
+      "name": "Saltwater Diner",
+      "hoursForever": 23,
+      "hours2Weeks": null,
+      "lastPlayedText": "2/8/2026",
+      "lastPlayedAt": 1770561600000,
+      "minutesForever": 1380,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000032,
+      "name": "Nine Lamps",
+      "hoursForever": 21,
+      "hours2Weeks": null,
+      "lastPlayedText": "6/9/2024",
+      "lastPlayedAt": 1717966800000,
+      "minutesForever": 1260,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000026,
+      "name": "Pyrewatch",
+      "hoursForever": 20,
+      "hours2Weeks": null,
+      "lastPlayedText": "4/16/2023",
+      "lastPlayedAt": 1681672200000,
+      "minutesForever": 1200,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000021,
+      "name": "Cinder Vale",
+      "hoursForever": 18,
+      "hours2Weeks": null,
+      "lastPlayedText": "1/18/2026",
+      "lastPlayedAt": 1768767600000,
+      "minutesForever": 1080,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000025,
+      "name": "Lanternfall Remnant",
+      "hoursForever": 15,
+      "hours2Weeks": null,
+      "lastPlayedText": "3/7/2026",
+      "lastPlayedAt": 1772899200000,
+      "minutesForever": 900,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000016,
+      "name": "Sunken Arcade",
+      "hoursForever": 14,
+      "hours2Weeks": 2.5,
+      "lastPlayedText": "10/9/2026",
+      "lastPlayedAt": 1791568200000,
+      "minutesForever": 840,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000028,
+      "name": "Obsidian Tram",
+      "hoursForever": 12.5,
+      "hours2Weeks": 4,
+      "lastPlayedText": "10/13/2026",
+      "lastPlayedAt": 1791929400000,
+      "minutesForever": 750,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000019,
+      "name": "Nightglass",
+      "hoursForever": 11,
+      "hours2Weeks": null,
+      "lastPlayedText": "10/29/2023",
+      "lastPlayedAt": 1698616800000,
+      "minutesForever": 660,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000043,
+      "name": "Pocket Cartographer",
+      "hoursForever": 9,
+      "hours2Weeks": null,
+      "lastPlayedText": "12/28/2022",
+      "lastPlayedAt": 1672244100000,
+      "minutesForever": 540,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000033,
+      "name": "Farlight Courier",
+      "hoursForever": 8.5,
+      "hours2Weeks": null,
+      "lastPlayedText": "1/5/2025",
+      "lastPlayedAt": 1736095500000,
+      "minutesForever": 510,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000039,
+      "name": "Driftwood Tales",
+      "hoursForever": 6.2,
+      "hours2Weeks": null,
+      "lastPlayedText": "2/3/2024",
+      "lastPlayedAt": 1706980200000,
+      "minutesForever": 372,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000040,
+      "name": "Cobalt Siege",
+      "hoursForever": 3.5,
+      "hours2Weeks": null,
+      "lastPlayedText": "3/16/2025",
+      "lastPlayedAt": 1742161200000,
+      "minutesForever": 210,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000034,
+      "name": "Marigold Engine",
+      "hoursForever": 3,
+      "hours2Weeks": null,
+      "lastPlayedText": "6/3/2025",
+      "lastPlayedAt": 1748978100000,
+      "minutesForever": 180,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000044,
+      "name": "Bramble Post",
+      "hoursForever": 2.2,
+      "hours2Weeks": null,
+      "lastPlayedText": "6/29/2025",
+      "lastPlayedAt": 1751220000000,
+      "minutesForever": 132,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000036,
+      "name": "Tall Grass",
+      "hoursForever": 1.6,
+      "hours2Weeks": 1.6,
+      "lastPlayedText": "10/8/2026",
+      "lastPlayedAt": 1791483600000,
+      "minutesForever": 96,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000015,
+      "name": "Hearthbound",
+      "hoursForever": 0.5,
+      "hours2Weeks": null,
+      "lastPlayedText": "2/21/2025",
+      "lastPlayedAt": 1740166200000,
+      "minutesForever": 30,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000012,
+      "name": "Lowtide",
+      "hoursForever": 0.4,
+      "hours2Weeks": null,
+      "lastPlayedText": "5/2/2024",
+      "lastPlayedAt": 1714680000000,
+      "minutesForever": 24,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000013,
+      "name": "Brass Meridian",
+      "hoursForever": 0,
+      "hours2Weeks": null,
+      "lastPlayedText": null,
+      "lastPlayedAt": null,
+      "minutesForever": 0,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000035,
+      "name": "Wintering",
+      "hoursForever": 0,
+      "hours2Weeks": null,
+      "lastPlayedText": null,
+      "lastPlayedAt": null,
+      "minutesForever": 0,
+      "fromFamily": false
+    },
+    {
+      "appId": 9000045,
+      "name": "Oddment Hotel",
+      "hoursForever": 0,
+      "hours2Weeks": null,
+      "lastPlayedText": null,
+      "lastPlayedAt": null,
+      "minutesForever": 0,
+      "fromFamily": false
+    }
+  ]
+}

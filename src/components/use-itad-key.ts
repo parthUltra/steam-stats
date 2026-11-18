@@ -1,23 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 export function useItadKey(
   hasKey: boolean,
   onRefresh?: () => Promise<void> | void,
   onRefreshLows?: (opts?: { force?: boolean }) => Promise<void> | void,
 ) {
-  const [itadConnected, setItadConnected] = useState(hasKey);
+  const [savedThisSession, setSavedThisSession] = useState(false);
+  const itadConnected = hasKey || savedThisSession;
   const [itadStep, setItadStep] = useState<"explain" | "paste" | null>(null);
   const [itadKeyDraft, setItadKeyDraft] = useState("");
   const [itadSaving, setItadSaving] = useState(false);
   const [itadError, setItadError] = useState<string | null>(null);
   const [itadStatus, setItadStatus] = useState<string | null>(null);
   const [lowsRefreshing, setLowsRefreshing] = useState(false);
-
-  useEffect(() => {
-    setItadConnected(hasKey);
-  }, [hasKey]);
 
   const openItadExplain = useCallback(() => {
     setItadError(null);
@@ -69,7 +66,7 @@ export function useItadKey(
       if (!res.ok || json.ok === false) {
         throw new Error(json.error || "Could not save API key");
       }
-      setItadConnected(true);
+      setSavedThisSession(true);
       setItadStep(null);
       setItadKeyDraft("");
       setItadSaving(false);

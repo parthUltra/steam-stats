@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs/promises";
+import { loadOrReport, type DataIssue } from "@/lib/data/data-issues";
 import { loadLocalAccountData } from "@/lib/data/load-local";
-import { titlesForPriceRefresh } from "@/lib/analytics/spending";
+import {
+  pricingTitles,
+  withOwnedLicenses,
+} from "@/lib/analytics/pricing-titles";
 import { loadReceivedGifts } from "@/lib/gifts/received-store";
+import { serverError } from "@/lib/http/errors";
 import { rejectCrossOrigin } from "@/lib/http/same-origin";
 import { spawnDetachedScript } from "@/lib/process/spawn-script";
+import { isOffline, skipAutoPriceRefresh } from "@/lib/runtime";
 import {
   countLatestQuotes,
+  emptyPriceCache,
+  hasItadApiKey,
   isStoreLowsWeekFresh,
   isQuoteLatestStoreLow,
   loadPriceCache,
@@ -14,39 +22,66 @@ import {
 } from "@/lib/pricing/prices";
 import {
   isPriceRefreshRunning,
-  PRICE_REFRESH_PID_FILE,
-  PRICE_REFRESH_STATUS_DIR,
+  priceRefreshPidFile,
+  priceRefreshStatusDir,
   readPriceRefreshStatus,
   stopPriceRefresh,
+  writePriceRefreshPid,
   writePriceRefreshStatus,
 } from "@/lib/pricing/price-refresh-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * The price cache, or an empty stand-in plus the issue when the file exists
+ * but is corrupt. The file is never written from here.
+ */
+async function readPriceCache() {
+  const issues: DataIssue[] = [];
+  const cache = await loadOrReport(
+    "price-cache-unreadable",
+    loadPriceCache,
+    emptyPriceCache,
+    issues,
+  );
+  return { cache, issue: issues[0] ?? null };
+}
+
 async function libraryFreshness() {
+  // Without a key there is no ITAD check to wait for: the Steam price
+  // timestamp decides what is fresh.
+  const itadKey = await hasItadApiKey();
   try {
     const bundle = await loadLocalAccountData();
-    const received = await loadReceivedGifts();
-    const titles = titlesForPriceRefresh({
-      purchases: bundle.purchases,
-      licenses: bundle.licenses,
-      ownedTitles: bundle.playedGames
-        .filter((g) => !g.fromFamily)
-        .map((g) => g.name),
-      mailGiftTitles: received.gifts.map((g) => g.title),
-    });
+    // An unreadable gifts file only means no gift titles to price.
+    const received = await loadOrReport(
+      "received-gifts-unreadable",
+      loadReceivedGifts,
+      () => ({ updatedAt: "", gifts: [] }),
+      [],
+    );
     const cache = await loadPriceCache();
-    const counts = countLatestQuotes(titles, cache);
+    const { titles } = pricingTitles(
+      {
+        ...bundle,
+        playedGames: withOwnedLicenses(bundle, Object.values(cache.quotes)),
+      },
+      received.gifts.map((g) => g.title),
+    );
+    const now = new Date();
+    const counts = countLatestQuotes(titles, cache, now, itadKey);
     return {
       ...counts,
-      weekFresh: isStoreLowsWeekFresh(titles, cache),
+      weekFresh: isStoreLowsWeekFresh(titles, cache, now, itadKey),
       titles,
     };
   } catch {
     const cache = await loadPriceCache();
     const quotes = Object.values(cache.quotes);
-    const latest = quotes.filter((q) => isQuoteLatestStoreLow(q)).length;
+    const latest = quotes.filter((q) =>
+      isQuoteLatestStoreLow(q, new Date(), itadKey),
+    ).length;
     return {
       latest,
       total: quotes.length,
@@ -62,9 +97,11 @@ function startOneShotRefresh() {
 
 /** GET — cheap status from the refresh file + cache stamp. No library parse. */
 export async function GET() {
-  const cache = await loadPriceCache();
+  const { cache, issue } = await readPriceCache();
   const running = await isPriceRefreshRunning();
-  const status = await readPriceRefreshStatus();
+  // The process id stays server-side.
+  const { pid: _pid, ...status } = await readPriceRefreshStatus();
+  void _pid;
   const latest = status.latest ?? 0;
   const total = status.libraryTotal ?? status.total ?? 0;
   const updatedMs = cache.updatedAt ? Date.parse(cache.updatedAt) : 0;
@@ -79,6 +116,9 @@ export async function GET() {
     weekFresh,
     ttlMs: PRICE_CACHE_TTL_MS,
     priceCacheUpdatedAt: cache.updatedAt || null,
+    // The cache file exists but cannot be read: nothing can be refreshed
+    // into it until it is restored (see `dataIssue.backup`) or removed.
+    ...(issue ? { cacheUnreadable: true, dataIssue: issue } : {}),
     status: running
       ? { ...status, phase: "running" as const, latest, libraryTotal: total }
       : { ...status, latest, libraryTotal: total },
@@ -100,7 +140,48 @@ export async function POST(req: Request) {
       restart?: boolean;
     };
     const force = body.force === true || body.restart === true;
+
+    // A refresh would have to save into the cache file; a corrupt one is
+    // never written over, so there is nothing to start.
+    const { issue } = await readPriceCache();
+    if (issue) {
+      return NextResponse.json({
+        ok: false,
+        started: false,
+        cacheUnreadable: true,
+        dataIssue: issue,
+        message: issue.message,
+      });
+    }
+
     const { latest, total, weekFresh } = await libraryFreshness();
+
+    // Offline: start nothing, and answer 200 so the page (which POSTs here on
+    // every mount) has no failing request in its console.
+    if (isOffline()) {
+      return NextResponse.json({
+        ok: true,
+        started: false,
+        skipped: true,
+        offline: true,
+        latest,
+        total,
+      });
+    }
+
+    // `npm run launch:fast`: no automatic refresh; "refresh now" still works.
+    if (!force && skipAutoPriceRefresh()) {
+      return NextResponse.json({
+        ok: true,
+        started: false,
+        skipped: true,
+        skipPrices: true,
+        message:
+          "Automatic price refresh is off (STEAM_STATS_SKIP_PRICES=1). Use Refresh to run it.",
+        latest,
+        total,
+      });
+    }
 
     if (!force && weekFresh) {
       return NextResponse.json({
@@ -129,7 +210,7 @@ export async function POST(req: Request) {
       });
     }
 
-    await fs.mkdir(PRICE_REFRESH_STATUS_DIR, { recursive: true });
+    await fs.mkdir(priceRefreshStatusDir(), { recursive: true });
     await writePriceRefreshStatus({
       phase: "running",
       message: `Weekly Store lows refresh… ${latest} / ${total}`,
@@ -143,7 +224,7 @@ export async function POST(req: Request) {
 
     const child = startOneShotRefresh();
     if (child.pid) {
-      await fs.writeFile(PRICE_REFRESH_PID_FILE, String(child.pid));
+      await writePriceRefreshPid(child.pid);
       await writePriceRefreshStatus({
         phase: "running",
         pid: child.pid,
@@ -158,7 +239,7 @@ export async function POST(req: Request) {
     child.on("exit", (code) => {
       void (async () => {
         try {
-          await fs.unlink(PRICE_REFRESH_PID_FILE).catch(() => undefined);
+          await fs.unlink(priceRefreshPidFile()).catch(() => undefined);
           const next = await libraryFreshness();
           if (code === 0) {
             await writePriceRefreshStatus({
@@ -194,12 +275,6 @@ export async function POST(req: Request) {
       ttlMs: PRICE_CACHE_TTL_MS,
     });
   } catch (err) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: err instanceof Error ? err.message : "Failed to start refresh",
-      },
-      { status: 500 },
-    );
+    return serverError("Failed to start refresh", err, { ok: false });
   }
 }

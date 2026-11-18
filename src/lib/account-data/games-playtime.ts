@@ -1,4 +1,5 @@
-import { parse } from "date-fns";
+import { isoUtcDate as isoDate, parseSteamDate } from "@/lib/dates";
+import { normTitle } from "@/lib/titles";
 
 export type PlayedGame = {
   appId: number;
@@ -17,28 +18,54 @@ export type PlayedGame = {
   /** License acquisition date (for unplayed / recently added shelf rows) */
   addedAt?: number | null;
   addedText?: string | null;
+  /*
+   * What Steam reports beyond total hours. Present only when Steam sent the
+   * field (GetOwnedGames, or the games page's embedded JSON).
+   */
+  /** Minutes in the last two weeks (exact; `hours2Weeks` is the derived view). */
+  minutes2Weeks?: number;
+  /** Lifetime minutes per platform. */
+  minutesWindows?: number;
+  minutesMac?: number;
+  minutesLinux?: number;
+  minutesDeck?: number;
+  /** Minutes played offline, not yet attributed to a platform. */
+  minutesDisconnected?: number;
+  /** Steam's `rtime_last_played`: epoch seconds, exactly as returned. */
+  rtimeLastPlayed?: number;
 };
 
-/** Parse Steam “LAST PLAYED” labels like "2 Aug", "14 Jul", "26 May 2025". */
-export function parseLastPlayedAt(
-  text: string | null | undefined,
-  now = new Date(),
-): number | null {
-  if (!text) return null;
-  const cleaned = text.replace(/\s+/g, " ").trim();
-  if (!cleaned) return null;
+const DETAIL_FIELDS = [
+  "minutes2Weeks",
+  "minutesWindows",
+  "minutesMac",
+  "minutesLinux",
+  "minutesDeck",
+  "minutesDisconnected",
+  "rtimeLastPlayed",
+] as const;
 
-  const formats = ["d MMM yyyy", "d MMMM yyyy", "MMM d yyyy", "d MMM", "d MMMM"];
-  for (const fmt of formats) {
-    const d = parse(cleaned, fmt, now);
-    if (Number.isNaN(d.getTime())) continue;
-    // Year-less labels: if the date is in the future, roll back a year
-    if (!/yyyy/i.test(fmt) && d.getTime() > now.getTime() + 24 * 60 * 60 * 1000) {
-      d.setFullYear(d.getFullYear() - 1);
-    }
-    return d.getTime();
+/** The detail fields that are actually set on `g` (never `undefined` keys). */
+function detailOf(g: Partial<PlayedGame>): Partial<PlayedGame> {
+  const out: Partial<PlayedGame> = {};
+  for (const key of DETAIL_FIELDS) {
+    const v = g[key];
+    if (typeof v === "number" && Number.isFinite(v)) out[key] = v;
   }
-  return null;
+  return out;
+}
+
+
+/**
+ * The incoming row is the fresher source, so its flag decides. A source with no
+ * opinion (HTML scrape → undefined) leaves the stored flag alone. A stored
+ * `false` must not be sticky: an old merge wiped real family flags to `false`.
+ */
+export function mergeFamilyFlag(
+  stored?: boolean,
+  incoming?: boolean,
+): boolean | undefined {
+  return incoming ?? stored;
 }
 
 function decodeJsString(value: string): string {
@@ -53,14 +80,20 @@ function decodeJsString(value: string): string {
   }
 }
 
+/** "1,234.5" → 1234.5, "1,234" → 1234, "2,3" (decimal comma) → 2.3. */
+function parseDurationNumber(raw: string): number {
+  if (/^\d+,\d{1,2}$/.test(raw)) return Number(raw.replace(",", "."));
+  return Number(raw.replace(/,/g, ""));
+}
+
 /** Parse "2.3 hours" / "37 minutes" labels into hours. */
 function parsePlayedDurationLabel(text: string | null | undefined): number | null {
   if (!text) return null;
   const cleaned = text.replace(/\s+/g, " ").trim();
   const hours = cleaned.match(/^([\d,.]+)\s*hours?$/i);
-  if (hours) return Number(hours[1].replace(/,/g, ""));
+  if (hours) return parseDurationNumber(hours[1]);
   const minutes = cleaned.match(/^([\d,.]+)\s*minutes?$/i);
-  if (minutes) return Number(minutes[1].replace(/,/g, "")) / 60;
+  if (minutes) return parseDurationNumber(minutes[1]) / 60;
   return null;
 }
 
@@ -97,14 +130,27 @@ export function mergePlayedGames(
       lastPlayedText: preferIncomingLast
         ? g.lastPlayedText ?? prev.lastPlayedText
         : prev.lastPlayedText ?? g.lastPlayedText,
-      fromFamily: Boolean(prev.fromFamily && g.fromFamily),
+      fromFamily: mergeFamilyFlag(prev.fromFamily, g.fromFamily),
+      // `...prev` keeps stored detail; the incoming (fresher) row overrides
+      // only the fields it actually has.
+      ...detailOf(g),
     });
   }
   return [...byId.values()].sort((a, b) => b.hoursForever - a.hoursForever);
 }
 
-/** Parse community games page HTML (TOTAL PLAYED / LAST PLAYED cards). */
-export function parseGamesPlayedHtml(html: string): PlayedGame[] {
+/**
+ * Parse community games page HTML (TOTAL PLAYED / LAST PLAYED cards).
+ *
+ * `fetchedAt` is when the page was saved. The cards print recent dates
+ * without a year ("14 Jul", "Today"); those only mean something relative to
+ * that moment, so without it they stay undated (`lastPlayedAt: null`, label
+ * kept) — the wall clock is never used.
+ */
+export function parseGamesPlayedHtml(
+  html: string,
+  fetchedAt?: Date | number | string | null,
+): PlayedGame[] {
   const byId = new Map<number, PlayedGame>();
 
   // Primary: visible card links with TOTAL PLAYED nearby in raw HTML
@@ -114,7 +160,17 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
   while ((match = linkRe.exec(html)) !== null) {
     const appId = Number(match[1]);
     const name = match[2].replace(/\s+/g, " ").trim();
-    const chunk = html.slice(match.index, match.index + 1200);
+    // This card only: stop at the next card link so a card without
+    // TOTAL PLAYED cannot pick up its neighbour's hours.
+    const cardEnd = match.index + match[0].length;
+    const nextCard = html.indexOf(
+      'href="https://store.steampowered.com/app/',
+      cardEnd,
+    );
+    const chunk = html.slice(
+      match.index,
+      Math.min(match.index + 1200, nextCard < 0 ? html.length : nextCard),
+    );
     const hoursMatch = chunk.match(
       /TOTAL PLAYED<\/span>\s*((?:[\d,.]+\s*(?:hours?|minutes?)))/i,
     );
@@ -136,7 +192,8 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
         hoursForever,
         hours2Weeks,
         lastPlayedText,
-        lastPlayedAt: parseLastPlayedAt(lastPlayedText),
+        lastPlayedAt:
+          parseSteamDate(lastPlayedText, { now: fetchedAt })?.getTime() ?? null,
         minutesForever: Math.round(hoursForever * 60),
       });
     } else if (existing && hours2Weeks != null && existing.hours2Weeks == null) {
@@ -147,12 +204,16 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
   // Enrich / add from escaped SSR JSON.
   // Steam puts playtime_2weeks + rtime_last_played *after* playtime_forever.
   const jsonRe =
-    /\\"appid\\":(\d+),\\"name\\":\\"((?:\\\\.|[^\\"])*)\\",\\"playtime_forever\\":(\d+)((?:(?!\\"appid\\":).){0,400})/g;
+    /\\"appid\\":(\d+),\\"name\\":\\"((?:\\\\.|[^\\"])*)\\",\\"playtime_forever\\":(\d+)((?:(?!\\"appid\\":).){0,600})/g;
   while ((match = jsonRe.exec(html)) !== null) {
     const appId = Number(match[1]);
     const name = decodeJsString(match[2]);
     const minutesForever = Number(match[3]);
     const tail = match[4] ?? "";
+    const num = (field: string): number | undefined => {
+      const m = tail.match(new RegExp(`\\\\"${field}\\\\":(\\d+)`));
+      return m ? Number(m[1]) : undefined;
+    };
     const twoWeeksMatch = tail.match(/\\"playtime_2weeks\\":(\d+)/);
     const rtimeMatch = tail.match(/\\"rtime_last_played\\":(\d+)/);
     const hoursForever = minutesForever / 60;
@@ -161,6 +222,15 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
       : null;
     const rtime = rtimeMatch ? Number(rtimeMatch[1]) : 0;
     const lastPlayedAt = rtime > 0 ? rtime * 1000 : null;
+    const detail = detailOf({
+      minutes2Weeks: num("playtime_2weeks"),
+      minutesWindows: num("playtime_windows_forever"),
+      minutesMac: num("playtime_mac_forever"),
+      minutesLinux: num("playtime_linux_forever"),
+      minutesDeck: num("playtime_deck_forever"),
+      minutesDisconnected: num("playtime_disconnected"),
+      rtimeLastPlayed: rtime > 0 ? rtime : undefined,
+    });
 
     const existing = byId.get(appId);
     if (!existing) {
@@ -169,11 +239,10 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
         name,
         hoursForever,
         hours2Weeks,
-        lastPlayedText: lastPlayedAt
-          ? new Date(lastPlayedAt).toLocaleDateString()
-          : null,
+        lastPlayedText: lastPlayedAt ? isoDate(lastPlayedAt) : null,
         lastPlayedAt,
         minutesForever,
+        ...detail,
       });
     } else {
       const nextLast =
@@ -188,13 +257,14 @@ export function parseGamesPlayedHtml(html: string): PlayedGame[] {
         hours2Weeks: hours2Weeks ?? existing.hours2Weeks,
         lastPlayedAt: nextLast,
         lastPlayedText: preferJsonLast
-          ? new Date(lastPlayedAt!).toLocaleDateString()
+          ? isoDate(lastPlayedAt!)
           : existing.lastPlayedText,
         minutesForever: Math.max(
           existing.minutesForever ?? 0,
           minutesForever,
         ),
         name: existing.name || name,
+        ...detail,
       });
     }
   }
@@ -226,16 +296,15 @@ export function buildPlaytimeAnalytics(
   games: PlayedGame[],
   opts?: { steamId?: string | null; source?: PlaytimeAnalytics["source"] },
 ): PlaytimeAnalytics {
+  const finite = (n: number | null | undefined) =>
+    typeof n === "number" && Number.isFinite(n) ? n : 0;
   const played = games.filter((g) => g.hoursForever > 0);
   return {
     steamId: opts?.steamId ?? null,
     gameCount: games.length,
     gamesPlayed: played.length,
-    totalHours: games.reduce((s, g) => s + g.hoursForever, 0),
-    recentHours2Weeks: games.reduce(
-      (s, g) => s + (g.hours2Weeks ?? 0),
-      0,
-    ),
+    totalHours: games.reduce((s, g) => s + finite(g.hoursForever), 0),
+    recentHours2Weeks: games.reduce((s, g) => s + finite(g.hours2Weeks), 0),
     topGames: [...games].sort((a, b) => b.hoursForever - a.hoursForever).slice(0, 15),
     games: [...games].sort((a, b) => b.hoursForever - a.hoursForever),
     source: opts?.source ?? "account-data-html",
@@ -243,15 +312,12 @@ export function buildPlaytimeAnalytics(
 }
 
 function compactTitleKey(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/™|®/g, "")
-    .replace(/[^a-z0-9]+/g, "");
+  return normTitle(title).replace(/[^a-z0-9]+/g, "");
 }
 
 function libraryTitlesMatch(a: string, b: string): boolean {
-  const na = a.toLowerCase().replace(/™|®/g, "").replace(/\s+/g, " ").trim();
-  const nb = b.toLowerCase().replace(/™|®/g, "").replace(/\s+/g, " ").trim();
+  const na = normTitle(a);
+  const nb = normTitle(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
   const ca = compactTitleKey(a);

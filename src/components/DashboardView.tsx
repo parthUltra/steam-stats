@@ -1,16 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { CircleHelpIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import type { DashboardPayload } from "@/lib/analytics/dashboard";
-import { GameLibrary, type LibraryView } from "@/components/GameLibrary";
+import { DISPLAY_TZ_ATTR, displayTimeZone } from "@/components/dates";
+import { formatDay } from "@/components/library/format";
+import { GameDetail } from "@/components/library/GameDetail";
+import { GameLibrary } from "@/components/library/GameLibrary";
+import { buildRows, buildValueIndex } from "@/components/library/model";
+import {
+  useUrlState,
+  type AppTab,
+  type UrlPatch,
+} from "@/components/library/use-url-state";
 import { SpendingValue } from "@/components/SpendingValue";
 import { GlossaryDrawer } from "@/components/GlossaryDrawer";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CircleHelpIcon } from "lucide-react";
+import { useShortcutsPref } from "@/components/ui/use-shortcuts-pref";
 import { useGmailSync } from "@/components/use-gmail-sync";
 import { useItadKey } from "@/components/use-itad-key";
-import type { LowsProgress } from "@/components/DashboardClient";
+import type { LowsProgress, PriceStatus } from "@/components/DashboardClient";
 
 const STEAM_MARK = (
   <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden>
@@ -21,12 +38,113 @@ const STEAM_MARK = (
   </svg>
 );
 
-function isTypingTarget(target: EventTarget | null): boolean {
+/** Steam mark + product name; the only brand element in the app bar. */
+export function AppBrand() {
+  return (
+    <div className="app-brand">
+      <span className="app-brand-mark" aria-hidden>
+        {STEAM_MARK}
+      </span>
+      <h1>Steam Stats</h1>
+    </div>
+  );
+}
+
+/**
+ * Single-key shortcuts must not fire while typing, from a focused control
+ * (Space/Enter/letters belong to it), or behind an open dialog.
+ */
+function shortcutBlocked(target: EventTarget | null): boolean {
+  if (document.querySelector("[role='dialog'], [role='alertdialog']")) return true;
   if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
   if (target.isContentEditable) return true;
-  return Boolean(target.closest("[role='dialog'], [role='listbox']"));
+  return Boolean(
+    target.closest(
+      "input, textarea, select, button, a[href], summary, [role='button'], [role='tab'], [role='switch'], [role='listbox'], [role='menu'], [contenteditable='true']",
+    ),
+  );
+}
+
+const ISSUE_TITLE: Record<string, string> = {
+  "price-cache-unreadable": "The price cache could not be read",
+  "received-gifts-unreadable": "The received gifts file could not be read",
+};
+
+const ISSUE_EFFECT: Record<string, string> = {
+  "price-cache-unreadable":
+    "Shelf prices and store lows are missing until prices are refreshed, so Value totals are not meaningful right now.",
+  "received-gifts-unreadable":
+    "Gifts imported from Gmail are missing from the shelf and from Value.",
+};
+
+function PriceStatusControl({
+  status,
+  onRefresh,
+}: {
+  status: PriceStatus;
+  onRefresh: () => void;
+}) {
+  const day = formatDay(status.updatedAt);
+  const running = status.phase === "running";
+
+  let text: React.ReactNode;
+  let detail: string;
+  if (running) {
+    text = (
+      <>
+        Refreshing prices
+        {status.total > 0 ? (
+          <>
+            {" "}
+            <span className="mono">
+              {status.latest}/{status.total}
+            </span>
+          </>
+        ) : null}
+      </>
+    );
+    detail = "Fetching current store prices and all-time lows.";
+  } else if (status.phase === "error") {
+    text = "Price refresh failed";
+    detail = status.message ?? "The price refresh did not start.";
+  } else if (!day) {
+    text = "No prices stored yet";
+    detail = "Store prices have not been fetched on this machine yet.";
+  } else {
+    text = (
+      <>
+        Prices stored {day}
+        {status.phase === "offline" ? " · offline" : null}
+      </>
+    );
+    detail =
+      status.phase === "offline"
+        ? "Offline mode: the weekly price refresh is skipped and stored prices are shown."
+        : status.stale
+          ? "Stored prices are more than a week old."
+          : "Store prices refresh about once a week.";
+  }
+
+  return (
+    <div className="price-status" data-phase={status.phase}>
+      <p className="price-status-text" role="status" title={detail}>
+        <span className="price-status-dot" aria-hidden />
+        <span className="price-status-label">{text}</span>
+        <span className="sr-only">. {detail}</span>
+      </p>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Refresh store prices now"
+        title="Refresh store prices now"
+        disabled={running}
+        onClick={onRefresh}
+      >
+        <RefreshCwIcon className={running ? "animate-spin" : undefined} />
+      </Button>
+    </div>
+  );
 }
 
 export function DashboardView({
@@ -34,17 +152,46 @@ export function DashboardView({
   onRefresh,
   lowsProgress,
   onRefreshLows,
+  priceStatus,
 }: {
   data: DashboardPayload;
   onRefresh?: () => Promise<void> | void;
   lowsProgress?: LowsProgress | null;
   onRefreshLows?: (opts?: { force?: boolean }) => Promise<void> | void;
+  priceStatus?: PriceStatus;
 }) {
-  const [tab, setTab] = useState("library");
-  const [libraryView, setLibraryView] = useState<LibraryView>("hours");
-  const [libraryQuery, setLibraryQuery] = useState("");
+  const [url, writeUrl] = useUrlState();
+  const { tab, sort, layout, filters } = url;
+
+  // The search box owns its text; the URL mirrors it (debounced) and feeds it
+  // back on back/forward.
+  const [query, setQuery] = useState(url.query);
+  const queryTimer = useRef<number | null>(null);
+  const changeQuery = useCallback(
+    (next: string) => {
+      setQuery(next);
+      if (queryTimer.current != null) window.clearTimeout(queryTimer.current);
+      queryTimer.current = window.setTimeout(() => {
+        queryTimer.current = null;
+        writeUrl({ query: next }, "replace");
+      }, 250);
+    },
+    [writeUrl],
+  );
+  useEffect(() => {
+    const onPop = () => {
+      setQuery(new URLSearchParams(window.location.search).get("q") ?? "");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      if (queryTimer.current != null) window.clearTimeout(queryTimer.current);
+    };
+  }, []);
+
   const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [glossaryFocus, setGlossaryFocus] = useState<string | null>(null);
+  const [shortcutsOn] = useShortcutsPref();
   const searchRef = useRef<HTMLInputElement | null>(null);
   const gmail = useGmailSync(onRefresh, onRefreshLows);
   const itad = useItadKey(
@@ -58,125 +205,241 @@ export function DashboardView({
     setGlossaryOpen(true);
   }, []);
 
+  const rows = useMemo(
+    () => buildRows(data.playtime.games, buildValueIndex(data)),
+    [data],
+  );
+  const openRow = useMemo(
+    () =>
+      url.game == null
+        ? null
+        : (rows.find((r) => r.game.appId === url.game) ?? null),
+    [rows, url.game],
+  );
+  // Opening a game adds a history entry, so Back closes the drawer. Closing
+  // it by hand steps back over that entry instead of stacking another one.
+  const gamePushed = useRef(false);
+  const openGame = useCallback(
+    (appId: number) => {
+      gamePushed.current = true;
+      writeUrl({ game: appId }, "push");
+    },
+    [writeUrl],
+  );
+  const closeGame = useCallback(() => {
+    if (gamePushed.current) {
+      gamePushed.current = false;
+      window.history.back();
+    } else {
+      writeUrl({ game: null }, "replace");
+    }
+  }, [writeUrl]);
+
+  const patchLibrary = useCallback(
+    (patch: UrlPatch) => writeUrl(patch, "push"),
+    [writeUrl],
+  );
+
+  // Scroll position is remembered per tab: saved when leaving a tab (by click,
+  // shortcut or Back/Forward) and restored once the other tab is in the DOM.
+  const scrollByTab = useRef<Record<AppTab, number>>({ library: 0, spending: 0 });
+  const tabRef = useRef(tab);
+  const firstTabRender = useRef(true);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (isTypingTarget(e.target)) {
-        if (e.key === "Escape" && e.target instanceof HTMLInputElement) {
-          e.target.blur();
-        }
-        return;
+    const onPop = () => {
+      scrollByTab.current[tabRef.current] = window.scrollY;
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  useLayoutEffect(() => {
+    tabRef.current = tab;
+    if (firstTabRender.current) {
+      firstTabRender.current = false;
+      return;
+    }
+    // The incoming panel can reach full height a frame or two after it
+    // mounts, so keep asking until the saved offset is reachable.
+    const target = scrollByTab.current[tab] ?? 0;
+    let frame = 0;
+    let tries = 0;
+    const restore = () => {
+      window.scrollTo(0, target);
+      if (Math.abs(window.scrollY - target) > 1 && tries++ < 12) {
+        frame = window.requestAnimationFrame(restore);
       }
+    };
+    restore();
+    return () => window.cancelAnimationFrame(frame);
+  }, [tab]);
+
+  const setTab = useCallback(
+    (next: AppTab) => {
+      scrollByTab.current[tabRef.current] = window.scrollY;
+      writeUrl({ tab: next }, "push");
+    },
+    [writeUrl],
+  );
+
+  useEffect(() => {
+    if (!shortcutsOn) return;
+    const focusHeading = (id: string) => {
+      // After a shortcut swaps the view, put focus on its heading so the next
+      // Tab starts from the new content.
+      window.setTimeout(() => {
+        document.getElementById(id)?.focus({ preventScroll: true });
+      }, 0);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (e.defaultPrevented || e.repeat) return;
+      if (shortcutBlocked(e.target)) return;
 
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
       if (key === "/") {
         e.preventDefault();
-        setTab("library");
-        setLibraryView((v) => (v === "panorama" ? "hours" : v));
-        queueMicrotask(() => searchRef.current?.focus());
+        if (tab !== "library") setTab("library");
+        if (layout === "panorama") writeUrl({ layout: "grid" }, "push");
+        window.setTimeout(() => searchRef.current?.focus(), 0);
         return;
       }
-
       if (key === "1" || key === "l") {
         e.preventDefault();
         setTab("library");
+        focusHeading("library-title");
         return;
       }
       if (key === "2" || key === "v") {
         e.preventDefault();
         setTab("spending");
+        focusHeading("main");
         return;
       }
 
       if (tab !== "library") return;
 
-      if (key === "h") {
+      const patch: UrlPatch | null =
+        key === "h"
+          ? { sort: "hours", ...(layout === "panorama" ? { layout: "grid" } : {}) }
+          : key === "r"
+            ? { sort: "recent", ...(layout === "panorama" ? { layout: "grid" } : {}) }
+            : key === "a"
+              ? { sort: "name", ...(layout === "panorama" ? { layout: "grid" } : {}) }
+              : key === "g"
+                ? { layout: "grid" }
+                : key === "t"
+                  ? { layout: "list" }
+                  : key === "p"
+                    ? { layout: "panorama" }
+                    : null;
+      if (patch) {
         e.preventDefault();
-        setLibraryView("hours");
-      } else if (key === "r") {
-        e.preventDefault();
-        setLibraryView("recent");
-      } else if (key === "a") {
-        e.preventDefault();
-        setLibraryView("name");
-      } else if (key === "p") {
-        e.preventDefault();
-        setLibraryView("panorama");
+        writeUrl(patch, "push");
       }
     };
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab]);
+  }, [shortcutsOn, tab, layout, setTab, writeUrl]);
+
+  const wide = tab === "library";
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border/80 bg-card/80 px-4 py-3 backdrop-blur-md">
-        <div className="flex items-center gap-3">
-          <div
-            className="pointer-events-none size-8 text-[#c7d5e0] [&_svg]:size-full"
-            aria-hidden
-          >
-            {STEAM_MARK}
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <h1 className="text-xl font-bold tracking-tight">Steam Stats</h1>
-            <p className="text-sm text-muted-foreground">
-              Local library &amp; spend
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            onClick={() => openGlossary("shortcuts")}
-            aria-label="Open glossary and shortcuts"
-          >
-            <CircleHelpIcon data-icon="inline-start" />
-            Help
-          </Button>
-          <TabsList className="h-9">
-            <TabsTrigger value="library" className="px-3.5">
-              Library
-            </TabsTrigger>
-            <TabsTrigger value="spending" className="px-3.5">
-              Value
-            </TabsTrigger>
+    <Tabs
+      value={tab}
+      onValueChange={(next) => setTab(next === "spending" ? "spending" : "library")}
+      className="app"
+    >
+      {/* Stamps the render's time zone so the browser formats dates the same way. */}
+      <header className="app-bar" {...{ [DISPLAY_TZ_ATTR]: displayTimeZone() }}>
+        <div className="app-bar-inner shell" data-wide={wide}>
+          <AppBrand />
+          <TabsList className="app-tabs" aria-label="Sections">
+            <TabsTrigger value="library">Library</TabsTrigger>
+            <TabsTrigger value="spending">Value</TabsTrigger>
           </TabsList>
+          <div className="app-bar-end">
+            {priceStatus ? (
+              <PriceStatusControl
+                status={priceStatus}
+                onRefresh={() => void onRefreshLows?.({ force: true })}
+              />
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="app-help"
+              onClick={() => openGlossary("shortcuts")}
+              aria-label="Help: glossary and keyboard shortcuts"
+            >
+              <CircleHelpIcon data-icon="inline-start" />
+              <span className="app-help-label">Help</span>
+            </Button>
+          </div>
         </div>
       </header>
+
+      <main id="main" tabIndex={-1} className="shell app-main" data-wide={wide}>
+        {/* An unreadable cache file changes every number below: say so first. */}
+        {(data.meta.dataIssues ?? []).length > 0 ? (
+          <div className="app-issue" role="status">
+            <TriangleAlertIcon aria-hidden />
+            <div>
+              {(data.meta.dataIssues ?? []).map((issue) => (
+                <p key={issue.code}>
+                  <strong>{ISSUE_TITLE[issue.code] ?? "A cache file is unreadable"}.</strong>{" "}
+                  {ISSUE_EFFECT[issue.code] ?? "The dashboard is showing what it could read without it."}{" "}
+                  <span className="app-issue-file">
+                    {issue.backup
+                      ? `${issue.file} was left untouched; a backup is at ${issue.backup}.`
+                      : `${issue.file} was left untouched; there is no backup.`}
+                  </span>
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <TabsContent value="library" tabIndex={-1} className="app-panel">
+          <GameLibrary
+            data={data}
+            rows={rows}
+            sort={sort}
+            layout={layout}
+            filters={filters}
+            query={query}
+            onQueryChange={changeQuery}
+            onPatch={patchLibrary}
+            searchInputRef={searchRef}
+            onOpenGlossary={openGlossary}
+            onOpenGame={openGame}
+          />
+        </TabsContent>
+        <TabsContent value="spending" tabIndex={-1} className="app-panel">
+          <SpendingValue
+            data={data}
+            onOpenGlossary={openGlossary}
+            lowsProgress={lowsProgress}
+            gmail={gmail}
+            itad={itad}
+          />
+        </TabsContent>
+      </main>
 
       <GlossaryDrawer
         open={glossaryOpen}
         focusId={glossaryFocus}
         onClose={() => setGlossaryOpen(false)}
       />
-
-      <TabsContent value="library" className="mt-0 outline-none">
-        <GameLibrary
-          data={data}
-          view={libraryView}
-          onViewChange={setLibraryView}
-          query={libraryQuery}
-          onQueryChange={setLibraryQuery}
-          searchInputRef={searchRef}
-          onOpenGlossary={openGlossary}
-        />
-      </TabsContent>
-      <TabsContent value="spending" className="mt-0 outline-none">
-        <SpendingValue
-          data={data}
-          onOpenGlossary={openGlossary}
-          lowsProgress={lowsProgress}
-          gmail={gmail}
-          itad={itad}
-        />
-      </TabsContent>
+      <GameDetail
+        row={openRow}
+        totalTitles={rows.length}
+        totalHours={data.playtime.totalHours}
+        currency={data.valuation.currency || data.spending.currency}
+        artwork={data.artwork}
+        onClose={closeGame}
+      />
     </Tabs>
   );
 }

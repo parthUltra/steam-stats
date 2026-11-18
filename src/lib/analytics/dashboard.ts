@@ -1,230 +1,211 @@
-import { loadLocalAccountData } from "@/lib/data/load-local";
+/**
+ * Dashboard request path. Read-only by construction:
+ *
+ *   loadDashboardInputs()  file reads only — no network, no writes
+ *   computeDashboard()     pure and synchronous — no I/O, no clock
+ *   buildDashboard()       the two composed
+ *
+ * Everything that talks to Steam / ITAD or writes a cache (playtime fetch,
+ * price refresh, DLC-parent and artwork resolution) lives in scripts/.
+ */
+import { loadOrReport, type DataIssue } from "@/lib/data/data-issues";
+import {
+  loadLocalAccountData,
+  type LocalAccountBundle,
+} from "@/lib/data/load-local";
 import {
   applySteamInrListPrices,
   buildSpendingAnalytics,
-  isOwnedLibraryLicense,
-  parseSteamDate,
-  titlesForPriceRefresh,
 } from "@/lib/analytics/spending";
 import { buildLibraryValuation } from "@/lib/analytics/valuation";
 import { buildCostPerHourAnalytics } from "@/lib/analytics/cost-per-hour";
 import {
-  augmentPlayedWithOwnedLicenses,
   buildPlaytimeAnalytics,
-  type PlayedGame,
+  type PlaytimeAnalytics,
 } from "@/lib/account-data";
 import { resolveItadApiKey } from "@/lib/pricing/itad-credentials";
 import {
+  emptyPriceCache,
   loadPriceCache,
-  refreshPricesForTitles,
   resolveAndApplyStoreRegion,
+  type PriceCache,
 } from "@/lib/pricing/prices";
 import {
   storeRegionLabel,
+  type StoreRegion,
 } from "@/lib/pricing/store-region";
 import {
-  fetchOwnedGamesFromSteamSession,
-  fetchOwnedGamesPlaytime,
-} from "@/lib/steam/owned-games";
-import { resolveArtworkForAppIds } from "@/lib/steam/artwork-resolve";
-import { resolveDlcParents } from "@/lib/steam/dlc-parents";
+  legacyUrls,
+  loadArtworkCache,
+  type ArtworkUrls,
+} from "@/lib/steam/artwork-resolve";
+import { readDlcParents } from "@/lib/steam/dlc-parents";
 import { resolveSteamAppId } from "@/lib/steam/resolve-app-id";
-import { loadReceivedGifts } from "@/lib/gifts/received-store";
-import { normTitle } from "@/lib/analytics/acquisition";
+import {
+  loadReceivedGifts,
+  type GiftsReceivedStore,
+} from "@/lib/gifts/received-store";
+import { parseSteamDate } from "@/lib/dates";
+import { normTitle } from "@/lib/titles";
+import {
+  pricingTitles,
+  withOwnedLicenses,
+} from "@/lib/analytics/pricing-titles";
+import type { ArtworkMap, DashboardPayload } from "@/lib/analytics/contracts";
+import { buildStats } from "@/lib/stats";
 
-function mergePlaytime(
-  htmlGames: PlayedGame[],
-  apiGames: PlayedGame[],
-): {
-  games: PlayedGame[];
-  source: "account-data-html" | "steam-api" | "merged";
-} {
-  if (!apiGames.length) {
-    return { games: htmlGames, source: "account-data-html" };
-  }
-  if (!htmlGames.length) {
-    return { games: apiGames, source: "steam-api" };
-  }
-  const byId = new Map<number, PlayedGame>();
-  for (const g of htmlGames) byId.set(g.appId, g);
-  for (const g of apiGames) {
-    const prev = byId.get(g.appId);
-    if (!prev) {
-      byId.set(g.appId, g);
-      continue;
-    }
-    byId.set(g.appId, {
-      ...g,
-      // API is authoritative for full library hours
-      hoursForever: Math.max(prev.hoursForever, g.hoursForever),
-      hours2Weeks: g.hours2Weeks ?? prev.hours2Weeks,
-      lastPlayedAt:
-        Math.max(prev.lastPlayedAt ?? 0, g.lastPlayedAt ?? 0) ||
-        prev.lastPlayedAt ||
-        g.lastPlayedAt,
-      lastPlayedText:
-        (g.lastPlayedAt ?? 0) >= (prev.lastPlayedAt ?? 0) &&
-        (g.lastPlayedAt ?? 0) > 0
-          ? g.lastPlayedText ?? prev.lastPlayedText
-          : prev.lastPlayedText ?? g.lastPlayedText,
-      name: g.name || prev.name,
-      fromFamily: Boolean(prev.fromFamily && g.fromFamily),
-    });
-  }
+export type { DashboardPayload } from "@/lib/analytics/contracts";
+
+export type DashboardInputs = {
+  bundle: LocalAccountBundle;
+  priceCache: PriceCache;
+  region: StoreRegion;
+  receivedGifts: GiftsReceivedStore;
+  /** dlcAppId → parentAppId, cache read only */
+  dlcParents: Map<number, number>;
+  /** appId → URLs, cache read only */
+  artworkCache: Record<string, ArtworkUrls>;
+  hasItadApiKey: boolean;
+  /** Cache files that exist but could not be read (see loadDashboardInputs). */
+  dataIssues?: DataIssue[];
+};
+
+function quoteAppIdsOf(priceCache: PriceCache): number[] {
+  return Object.values(priceCache.quotes)
+    .map((q) => q.steamAppId)
+    .filter((id): id is number => id != null);
+}
+
+/**
+ * File reads only: no network, no writes.
+ *
+ * A cache file that exists but is corrupt does not fail the dashboard: it is
+ * reported in `dataIssues`, left untouched on disk, and replaced in memory by
+ * an empty stand-in (which is never saved — nothing here writes).
+ */
+export async function loadDashboardInputs(): Promise<DashboardInputs> {
+  const bundle = await loadLocalAccountData();
+  const dataIssues: DataIssue[] = [];
+  const loadedCache = await loadOrReport<PriceCache>(
+    "price-cache-unreadable",
+    loadPriceCache,
+    emptyPriceCache,
+    dataIssues,
+  );
+  const receivedGifts = await loadOrReport<GiftsReceivedStore>(
+    "received-gifts-unreadable",
+    loadReceivedGifts,
+    () => ({ updatedAt: "", gifts: [] }),
+    dataIssues,
+  );
+  // persist:false — a GET must never rewrite price-cache.json. The refresh
+  // script persists a newly detected region.
+  const { region, cache: priceCache } = await resolveAndApplyStoreRegion(
+    loadedCache,
+    bundle,
+    { persist: false },
+  );
+  const [dlcParents, artwork, itadKey] = await Promise.all([
+    readDlcParents(quoteAppIdsOf(priceCache)),
+    loadArtworkCache(),
+    resolveItadApiKey(),
+  ]);
   return {
-    games: [...byId.values()].sort((a, b) => b.hoursForever - a.hoursForever),
-    source: "merged",
+    bundle,
+    priceCache,
+    region,
+    receivedGifts,
+    dlcParents,
+    artworkCache: artwork.byAppId,
+    hasItadApiKey: Boolean(itadKey),
+    dataIssues,
   };
 }
 
-const PLAYTIME_TTL_MS = 6 * 60 * 60 * 1000;
-
-async function loadFullLibraryPlaytime(
-  htmlGames: PlayedGame[],
-  steamId: string | null,
-  fetchedAt?: string | null,
-): Promise<{
-  games: PlayedGame[];
-  source: "account-data-html" | "steam-api" | "merged";
-}> {
-  const fetchedMs = fetchedAt ? Date.parse(fetchedAt) : NaN;
-  if (
-    htmlGames.length > 0 &&
-    Number.isFinite(fetchedMs) &&
-    Date.now() - fetchedMs < PLAYTIME_TTL_MS
-  ) {
-    return {
-      games: htmlGames,
-      source: htmlGames.length > 40 ? "steam-api" : "account-data-html",
-    };
+/**
+ * Where the playtime snapshot came from — what the writing script recorded
+ * in games-played.json (`bundle.playedSource`, set by the loader),
+ * never a guess from the row count. The UI shows "Partial library snapshot"
+ * for "account-data-html" (the Account Data games page is a short list), so an
+ * unknown source is reported as that.
+ */
+export function playtimeSourceFromSnapshot(
+  recorded: string | null | undefined,
+): PlaytimeAnalytics["source"] {
+  if (recorded === "steam-session-api" || recorded === "steam-api") {
+    return "steam-api";
   }
-
-  let ownedFromApi: PlayedGame[] = [];
-  let source: "account-data-html" | "steam-api" | "merged" =
-    "account-data-html";
-
-  const apiKey = process.env.STEAM_API_KEY;
-  if (apiKey && steamId) {
-    try {
-      ownedFromApi = await fetchOwnedGamesPlaytime(steamId, apiKey);
-      if (ownedFromApi.length) source = "steam-api";
-    } catch {
-      // fall through
-    }
-  }
-
-  try {
-    const session = await fetchOwnedGamesFromSteamSession();
-    if (session?.games.length) {
-      // Session payload already includes family-played titles
-      const merged = mergePlaytime(
-        mergePlaytime(htmlGames, ownedFromApi).games,
-        session.games,
-      );
-      return {
-        games: merged.games,
-        source: ownedFromApi.length || htmlGames.length ? "merged" : "steam-api",
-      };
-    }
-  } catch {
-    // keep owned / html
-  }
-
-  if (ownedFromApi.length) {
-    return mergePlaytime(htmlGames, ownedFromApi);
-  }
-  return { games: htmlGames, source: "account-data-html" };
+  if (recorded === "merged") return "merged";
+  return "account-data-html";
 }
 
-export async function buildDashboard(options?: {
-  refreshPrices?: boolean;
-  priceLimit?: number;
-}) {
-  const bundle = await loadLocalAccountData();
+/**
+ * "Now" for stats: when playtime was fetched, else the newest last-played
+ * stamp. Never the wall clock, so the same inputs give the same payload.
+ */
+function snapshotTime(bundle: LocalAccountBundle): number {
+  const fetched = bundle.playedFetchedAt
+    ? Date.parse(bundle.playedFetchedAt)
+    : NaN;
+  if (Number.isFinite(fetched)) return fetched;
+  return bundle.playedGames.reduce(
+    (max, g) => Math.max(max, g.lastPlayedAt ?? 0),
+    0,
+  );
+}
+
+/** ISO date / date-time → epoch ms (a bare date is local midnight); null if absent. */
+function epochMs(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const ms = /^\d{4}-\d{2}-\d{2}$/.test(iso)
+    ? (parseSteamDate(iso)?.getTime() ?? NaN)
+    : Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Pure and synchronous: no I/O, no clock. */
+export function computeDashboard(inputs: DashboardInputs): DashboardPayload {
+  const { bundle, priceCache, region, receivedGifts, dlcParents } = inputs;
+
+  const now = snapshotTime(bundle);
+
   const spending = buildSpendingAnalytics(
     bundle.purchases,
     bundle.licenses,
     bundle.accountSpend,
+    { now },
   );
 
-  const full = await loadFullLibraryPlaytime(
-    bundle.playedGames,
-    bundle.steamId,
-    bundle.playedFetchedAt,
-  );
-  let playedGames = full.games;
-  const playtimeSource = full.source;
-
-  const receivedStore = await loadReceivedGifts();
-  const mailGiftTitles = receivedStore.gifts.map((g) => g.title);
+  const mailGiftTitles = receivedGifts.gifts.map((g) => g.title);
   const mailGiftSenders = new Map<string, string>();
-  for (const g of receivedStore.gifts) {
-    if (!g.fromPersona) continue;
-    mailGiftSenders.set(normTitle(g.title), g.fromPersona);
-  }
-  const titles = titlesForPriceRefresh({
-    purchases: bundle.purchases,
-    licenses: bundle.licenses,
-    ownedTitles: playedGames.filter((g) => !g.fromFamily).map((g) => g.name),
-    mailGiftTitles,
-  });
-  let priceCache = await loadPriceCache();
-  const { region, cache: regionCache } = await resolveAndApplyStoreRegion(
-    priceCache,
-    bundle,
-  );
-  priceCache = regionCache;
-  // priceLimit 0 = cache only (preferred). Non-zero tops up missing/stale
-  // quotes (7-day TTL unless force) — used by CLI refresh, not dashboard load.
-  const priceLimit = options?.priceLimit ?? 0;
-  if (priceLimit > 0) {
-    priceCache = await refreshPricesForTitles(titles, {
-      force: Boolean(options?.refreshPrices),
-      limit: priceLimit,
-    });
+  const mailGiftReceivedAt = new Map<string, string>();
+  for (const g of receivedGifts.gifts) {
+    if (g.fromPersona) mailGiftSenders.set(normTitle(g.title), g.fromPersona);
+    if (g.receivedAt) mailGiftReceivedAt.set(normTitle(g.title), g.receivedAt);
   }
 
-  // Owned licenses missing from playtime (never launched / API 401) still belong
-  // on the shelf — resolve app ids from price quotes + known playtime titles.
-  const idSourcesForOwned = [
-    ...playedGames.map((g) => ({ title: g.name, steamAppId: g.appId })),
-    ...Object.values(priceCache.quotes).map((q) => ({
-      title: q.title,
-      steamAppId: q.steamAppId,
-    })),
-  ];
-  playedGames = augmentPlayedWithOwnedLicenses(
-    playedGames,
-    bundle.licenses.filter(isOwnedLibraryLicense).map((lic) => ({
-      item: lic.item,
-      dateText: lic.dateText,
-      addedAt: parseSteamDate(lic.dateText)?.getTime() ?? null,
-    })),
-    (title) => resolveSteamAppId(title, idSourcesForOwned),
+  // Owned licenses missing from playtime (never launched) still belong on the
+  // shelf — resolve app ids from price quotes + known playtime titles.
+  const playedGames = withOwnedLicenses(
+    bundle,
+    Object.values(priceCache.quotes),
+    dlcParents,
+  );
+
+  // One owned-title list, computed after the augment, feeds both the pricing
+  // queue and the valuation.
+  const { titles, ownedTitles, unrecordedOwnedTitles } = pricingTitles(
+    { ...bundle, playedGames },
+    mailGiftTitles,
   );
 
   const playtime = buildPlaytimeAnalytics(playedGames, {
     steamId: bundle.steamId,
-    source: playtimeSource,
+    source: playtimeSourceFromSnapshot(bundle.playedSource),
   });
 
   // Month-detail full prices: Steam store list for detected country
   applySteamInrListPrices(spending.monthly, priceCache.quotes);
-
-  const quoteAppIds = Object.values(priceCache.quotes)
-    .map((q) => q.steamAppId)
-    .filter((id): id is number => id != null);
-
-  // DLC parents + early artwork (playtime ∪ quote ids) overlap — artwork
-  // that needs valuation-hydrated ids is filled in a second pass below.
-  const earlyArtworkIds = [
-    ...playedGames.map((g) => g.appId),
-    ...quoteAppIds,
-  ];
-  const [dlcParents, earlyArtwork] = await Promise.all([
-    resolveDlcParents(quoteAppIds),
-    resolveArtworkForAppIds(earlyArtworkIds),
-  ]);
 
   const valuation = buildLibraryValuation(
     bundle.purchases,
@@ -233,11 +214,10 @@ export async function buildDashboard(options?: {
     spending,
     {
       dlcParents,
-      ownedTitles: playedGames
-        .filter((g) => !g.fromFamily)
-        .map((g) => g.name),
+      ownedTitles,
       mailGiftTitles,
       mailGiftSenders,
+      mailGiftReceivedAt,
     },
   );
 
@@ -259,66 +239,67 @@ export async function buildDashboard(options?: {
       steamAppId: q.steamAppId,
     })),
   ];
-  for (const g of valuation.games) {
-    if (g.steamAppId == null) {
-      g.steamAppId = resolveSteamAppId(g.title, idSources);
-    }
-  }
-  for (const g of valuation.giftsSentGames) {
-    if (g.steamAppId == null) {
-      g.steamAppId = resolveSteamAppId(g.title, idSources);
-    }
-  }
-  for (const g of [
+  const valuationRows = [
+    ...valuation.games,
+    ...valuation.giftsSentGames,
     ...valuation.giftsReceivedGames,
     ...valuation.freeGames,
     ...valuation.bundleGames,
     ...valuation.ownershipGrantGames,
     ...valuation.unknownUnpaidGames,
-  ]) {
+  ];
+  for (const g of valuationRows) {
     if (g.steamAppId == null) {
       g.steamAppId = resolveSteamAppId(g.title, idSources);
     }
   }
 
+  // Artwork: cached URLs where we have them, deterministic legacy CDN paths
+  // otherwise (scripts/refresh-prices.ts fills the cache).
   const artworkAppIds = [
     ...playedGames.map((g) => g.appId),
-    ...valuation.games
-      .map((g) => g.steamAppId)
-      .filter((id): id is number => id != null),
-    ...valuation.giftsSentGames
-      .map((g) => g.steamAppId)
-      .filter((id): id is number => id != null),
-    ...valuation.giftsReceivedGames
-      .map((g) => g.steamAppId)
-      .filter((id): id is number => id != null),
-    ...valuation.freeGames
-      .map((g) => g.steamAppId)
-      .filter((id): id is number => id != null),
-    ...valuation.bundleGames
-      .map((g) => g.steamAppId)
-      .filter((id): id is number => id != null),
-    ...valuation.ownershipGrantGames
-      .map((g) => g.steamAppId)
-      .filter((id): id is number => id != null),
-    ...valuation.unknownUnpaidGames
-      .map((g) => g.steamAppId)
-      .filter((id): id is number => id != null),
-    ...costPerHour.games
-      .map((g) => g.steamAppId)
-      .filter((id): id is number => id != null),
+    ...quoteAppIdsOf(priceCache),
+    ...valuationRows.map((g) => g.steamAppId),
+    ...costPerHour.games.map((g) => g.steamAppId),
   ];
-  const earlyKeys = new Set(Object.keys(earlyArtwork));
-  const missingArtworkIds = [
-    ...new Set(artworkAppIds.filter((id) => !earlyKeys.has(String(id)))),
-  ];
-  const artwork =
-    missingArtworkIds.length > 0
-      ? {
-          ...earlyArtwork,
-          ...(await resolveArtworkForAppIds(missingArtworkIds)),
-        }
-      : earlyArtwork;
+  const artwork: ArtworkMap = {};
+  for (const id of artworkAppIds) {
+    if (id == null || !(id > 0)) continue;
+    const key = String(id);
+    if (artwork[key]) continue;
+    const { library, header, capsule } =
+      inputs.artworkCache[key] ?? legacyUrls(id);
+    // Only the URLs: cache bookkeeping (hashed / updatedAt) stays server-side.
+    artwork[key] = { library, header, capsule };
+  }
+
+  // `games` is exactly playedPaid + unplayedPaid again; the client reads only
+  // those two, so the combined list is not sent.
+  const { games: _allCostPerHourGames, ...costPerHourPayload } = costPerHour;
+  void _allCostPerHourGames;
+
+  const stats = buildStats({
+    playedGames,
+    purchases: bundle.purchases,
+    licenses: bundle.licenses,
+    spending,
+    valuation,
+    costPerHour,
+    currency: valuation.currency || spending.currency,
+    now,
+    // Every gift we can date: Steam gift licences (on the shelf rows) and
+    // imported gift e-mails.
+    receivedGifts: [
+      ...valuation.giftsReceivedGames.map((g) => ({
+        title: g.title,
+        receivedAt: epochMs(g.receivedAt),
+      })),
+      ...receivedGifts.gifts.map((g) => ({
+        title: g.title,
+        receivedAt: epochMs(g.receivedAt),
+      })),
+    ],
+  });
 
   return {
     meta: {
@@ -327,29 +308,38 @@ export async function buildDashboard(options?: {
       licenseRows: bundle.licenses.length,
       priceCacheUpdatedAt: priceCache.updatedAt || null,
       titlesForPricing: titles.length,
-      hasSteamApiKey: Boolean(process.env.STEAM_API_KEY),
-      hasItadApiKey: Boolean(await resolveItadApiKey()),
+      hasSteamApiKey: false,
+      hasItadApiKey: inputs.hasItadApiKey,
       storeCountry: region.country,
       storeCurrency: region.currency,
       storeRegionLabel: storeRegionLabel(region.country),
       storeRegionSource: region.source,
       libraryGameCount: playedGames.length,
-      mailGiftsLastSyncedAt: receivedStore.lastMailSyncedAt ?? null,
-      mailGiftsCount: receivedStore.gifts.length,
-      mailGifts: receivedStore.gifts.map((g) => ({
+      mailGiftsLastSyncedAt: receivedGifts.lastMailSyncedAt ?? null,
+      mailGiftsCount: receivedGifts.gifts.length,
+      mailGifts: receivedGifts.gifts.map((g) => ({
         title: g.title,
         fromPersona: g.fromPersona ?? null,
         receivedAt: g.receivedAt ?? null,
-        giftUrl: g.giftUrl ?? null,
+        // A gift redemption URL is a bearer link: it never leaves the server
+        giftUrl: null,
         subject: g.subject ?? null,
         source: g.source,
         importedAt: g.importedAt,
       })),
+      sourceStatus: bundle.sourceStatus ?? null,
+      needsReparse: Object.values(bundle.sourceStatus ?? {}).some(
+        (s) => s.status === "unknown",
+      ),
+      playedFetchedAt: bundle.playedFetchedAt,
+      accountSpendFetchedAt: bundle.accountSpendFetchedAt ?? null,
+      dataIssues: inputs.dataIssues ?? [],
+      ownedWithoutRecordCount: unrecordedOwnedTitles.length,
     },
     playtime,
     spending,
     valuation,
-    costPerHour,
+    costPerHour: costPerHourPayload,
     artwork,
     recentPurchases: bundle.purchases.slice(0, 15).map((p) => ({
       date: p.dateText,
@@ -361,7 +351,10 @@ export async function buildDashboard(options?: {
       refunded: p.refunded,
       discountPct: p.discountPct,
     })),
+    stats,
   };
 }
 
-export type DashboardPayload = Awaited<ReturnType<typeof buildDashboard>>;
+export async function buildDashboard(): Promise<DashboardPayload> {
+  return computeDashboard(await loadDashboardInputs());
+}

@@ -45,11 +45,13 @@ export async function startGmailSyncProcess(): Promise<StartGmailSyncResult> {
       status: await readGmailSyncStatus(),
     };
   } catch (err) {
+    // Fixed text for the client; detail (paths, spawn errors) stays in the log.
+    console.error("[gmail-sync] failed to start:", err);
     return {
       started: false,
       alreadyRunning: false,
       status: await readGmailSyncStatus(),
-      error: err instanceof Error ? err.message : "Failed to start Gmail sync",
+      error: "Failed to start Gmail sync",
     };
   }
 }

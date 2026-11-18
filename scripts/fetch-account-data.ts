@@ -7,10 +7,25 @@
 import { chromium, type Page } from "playwright";
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  loadWholePurchaseHistory,
+  markPurchaseHistoryComplete,
+  staleLicensePageFiles,
+  walkLicensePages,
+} from "../src/lib/account-data/pagination";
+import { isLicensesPage } from "../src/lib/account-data/parsers";
+import { safeErrorMessage } from "../src/lib/data/redact";
+import {
+  ensurePrivateDir,
+  makePrivate,
+  writePrivateFile,
+} from "../src/lib/process/private-files";
+import { rootPath } from "../src/lib/runtime";
+import { saveOwnedGamesSnapshot } from "../src/lib/steam/owned-games-store";
 
-const ROOT = path.resolve(__dirname, "..");
-const SAMPLES_DIR = path.join(ROOT, "samples", "account-data");
-const SESSION_DIR = path.join(ROOT, ".steam-session");
+// Data root (honours STEAM_STATS_ROOT), the same one every reader uses.
+const SAMPLES_DIR = rootPath("samples", "account-data");
+const SESSION_DIR = rootPath(".steam-session");
 const STORAGE_STATE = path.join(SESSION_DIR, "storage-state.json");
 
 const PAGES: { id: string; url: string }[] = [
@@ -25,8 +40,10 @@ const PAGES: { id: string; url: string }[] = [
 ];
 
 async function ensureDirs() {
-  await fs.mkdir(SAMPLES_DIR, { recursive: true });
-  await fs.mkdir(SESSION_DIR, { recursive: true });
+  // Purchase/login history and the Steam login cookie: owner-only.
+  await ensurePrivateDir(rootPath("samples"));
+  await ensurePrivateDir(SAMPLES_DIR);
+  await ensurePrivateDir(SESSION_DIR);
 }
 
 async function hasExistingSession(): Promise<boolean> {
@@ -125,20 +142,25 @@ async function savePage(page: Page, id: string, url: string) {
     await settleLicensesTable(page);
   }
 
-  // Expand paginated Account Data / wallet history tables when present
-  for (let i = 0; i < 40; i++) {
-    const loadMore = page.locator(
-      ".AccountDataLoadMore:visible, #load_more_button:visible, a.Link:has-text('Load more'):visible, button:has-text('Show more'):visible",
-    );
-    if ((await loadMore.count()) === 0) break;
-    const first = loadMore.first();
-    const style = await first.getAttribute("style");
-    if (style?.includes("display: none") || style?.includes("display:none")) break;
-    try {
-      await first.click({ timeout: 3000 });
-      await page.waitForTimeout(1200);
-    } catch {
-      break;
+  // Expand "Load more" tables until nothing is left to load.
+  let historyComplete = false;
+  if (id === "purchase-history") {
+    // The history page keeps a cursor while rows remain behind the button.
+    ({ complete: historyComplete } = await loadWholePurchaseHistory({
+      probe: () => probeHistoryPage(page),
+      clickLoadMore: () => clickLoadMore(page),
+      maxClicks: LOAD_MORE_CAP,
+      log: (line) => console.log(`  ${line}`),
+    }));
+  } else {
+    let clicks = 0;
+    while (clicks < LOAD_MORE_CAP && (await clickLoadMore(page))) clicks += 1;
+    if (clicks >= LOAD_MORE_CAP) {
+      console.warn(
+        `  ${id}: INCOMPLETE — still offering "Load more" after ${clicks} clicks`,
+      );
+    } else if (clicks) {
+      console.log(`  ${id}: expanded with ${clicks} "Load more" click(s)`);
     }
   }
 
@@ -146,11 +168,36 @@ async function savePage(page: Page, id: string, url: string) {
     await settleLicensesTable(page);
   }
 
-  const html = await page.content();
+  let html = await page.content();
+  // The saved DOM still holds the page's original cursor script; record that
+  // every row is loaded so the parser does not report the file as partial.
+  if (id === "purchase-history" && historyComplete) {
+    html = markPurchaseHistoryComplete(html);
+  }
   const status = response?.status() ?? 0;
   const finalUrl = page.url();
   const outPath = path.join(SAMPLES_DIR, `${id}.html`);
-  await fs.writeFile(outPath, html, "utf8");
+  // A login / error page must not replace a good first licences page: the
+  // later pages on disk belong to it.
+  const keepSavedLicenses =
+    id === "licenses" &&
+    !isLicensesPage(html) &&
+    isLicensesPage(await fs.readFile(outPath, "utf8").catch(() => ""));
+  if (keepSavedLicenses) {
+    console.warn(
+      "  licenses: Steam did not return the licences page (login required?) — kept the previously saved pages.",
+    );
+    return {
+      id,
+      requestedUrl: url,
+      finalUrl,
+      status,
+      savedAt: null,
+      licensePages: 0,
+      licensesComplete: false,
+    };
+  }
+  await writePrivateFile(outPath, html);
 
   const meta = {
     id,
@@ -160,17 +207,132 @@ async function savePage(page: Page, id: string, url: string) {
     savedAt: new Date().toISOString(),
     bytes: Buffer.byteLength(html, "utf8"),
   };
-  await fs.writeFile(
+  await writePrivateFile(
     path.join(SAMPLES_DIR, `${id}.meta.json`),
     JSON.stringify(meta, null, 2),
-    "utf8",
   );
   console.log(`  → ${outPath} (${meta.bytes} bytes, HTTP ${status})`);
   if (id === "licenses") {
-    const rows = await page.locator("table.account_table tr").count();
-    console.log(`  → licenses table rows ≈ ${Math.max(0, rows - 1)} (excl. header)`);
+    return { ...meta, ...(await saveFurtherLicensePages(page, finalUrl, html)) };
   }
   return meta;
+}
+
+/** How long one "Load more" response may take before the page counts as stuck. */
+const HISTORY_SETTLE_TIMEOUT_MS = 30_000;
+
+/**
+ * Wait for the history page to finish its request, then read the cursor.
+ * Steam's WalletHistory_LoadMore() sets g_historyCursor = null before the
+ * request and restores it in .done(), so the cursor means nothing while the
+ * spinner is showing or a jQuery request is active.
+ */
+async function probeHistoryPage(page: Page) {
+  try {
+    await page.waitForFunction(
+      () => {
+        const spinner = document.querySelector<HTMLElement>(
+          "#wallet_history_loading",
+        );
+        const spinnerHidden =
+          !spinner ||
+          spinner.offsetParent === null ||
+          getComputedStyle(spinner).display === "none";
+        const jq = (window as unknown as { jQuery?: { active?: number } })
+          .jQuery;
+        return spinnerHidden && (!jq || jq.active === 0);
+      },
+      undefined,
+      { timeout: HISTORY_SETTLE_TIMEOUT_MS },
+    );
+  } catch {
+    return { settled: false, cursorPresent: false };
+  }
+  const cursorPresent = await page.evaluate(
+    () =>
+      (window as unknown as { g_historyCursor?: unknown }).g_historyCursor !=
+      null,
+  );
+  return { settled: true, cursorPresent };
+}
+
+/** Clicks before giving up on a "Load more" table (each adds a page of rows). */
+const LOAD_MORE_CAP = 500;
+
+/** Click a visible "Load more" control; false when there is none to click. */
+async function clickLoadMore(page: Page): Promise<boolean> {
+  const loadMore = page.locator(
+    ".AccountDataLoadMore:visible, #load_more_button:visible, a.Link:has-text('Load more'):visible, button:has-text('Show more'):visible",
+  );
+  if ((await loadMore.count()) === 0) return false;
+  const first = loadMore.first();
+  const style = await first.getAttribute("style");
+  if (style?.includes("display: none") || style?.includes("display:none")) {
+    return false;
+  }
+  try {
+    await first.click({ timeout: 3000 });
+    await page.waitForTimeout(1200);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The licences list is paginated ("Showing licenses 1-100 of 453"). Follow the
+ * Next link until it disappears, saving licenses-2.html, licenses-3.html, …
+ * next to licenses.html; the parser joins them. Pages left over from an
+ * earlier, longer fetch are removed so they are not joined in.
+ */
+async function saveFurtherLicensePages(
+  page: Page,
+  firstUrl: string,
+  firstHtml: string,
+) {
+  const walk = await walkLicensePages({
+    firstUrl,
+    firstHtml,
+    load: async (url) => {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
+      await settleLicensesTable(page);
+      return page.content();
+    },
+    save: async (fileName, html, url) => {
+      await writePrivateFile(path.join(SAMPLES_DIR, fileName), html);
+      await writePrivateFile(
+        path.join(SAMPLES_DIR, fileName.replace(/\.html$/, ".meta.json")),
+        JSON.stringify(
+          {
+            id: fileName.replace(/\.html$/, ""),
+            // The continuation token in the URL is account-specific: keep the path only
+            requestedUrl: url.split("?")[0],
+            savedAt: new Date().toISOString(),
+            bytes: Buffer.byteLength(html, "utf8"),
+          },
+          null,
+          2,
+        ),
+      );
+    },
+    log: (line) => console.log(`  → ${line}`),
+  });
+
+  // Only after a complete walk: an interrupted one keeps the older pages
+  // rather than shrinking the list further.
+  const stale = walk.complete
+    ? staleLicensePageFiles(await fs.readdir(SAMPLES_DIR), walk.pages)
+    : [];
+  for (const file of stale) {
+    await fs.unlink(path.join(SAMPLES_DIR, file)).catch(() => undefined);
+    await fs
+      .unlink(path.join(SAMPLES_DIR, file.replace(/\.html$/, ".meta.json")))
+      .catch(() => undefined);
+  }
+  if (stale.length) {
+    console.log(`  → licenses: removed ${stale.length} page file(s) from an older fetch`);
+  }
+  return { licensePages: walk.pages, licenseRows: walk.rows, licensesComplete: walk.complete };
 }
 
 /** Scroll + wait until the licenses account_table stops growing. */
@@ -240,6 +402,7 @@ async function main() {
     }
 
     await context.storageState({ path: STORAGE_STATE });
+    await makePrivate(STORAGE_STATE);
     console.log(`Session saved to ${STORAGE_STATE}`);
 
     const results = [];
@@ -255,10 +418,9 @@ async function main() {
       }
     }
 
-    await fs.writeFile(
+    await writePrivateFile(
       path.join(SAMPLES_DIR, "_manifest.json"),
       JSON.stringify({ fetchedAt: new Date().toISOString(), results }, null, 2),
-      "utf8",
     );
 
     console.log("\nDone. Samples written to samples/account-data/");
@@ -269,33 +431,17 @@ async function main() {
       );
       const owned = await fetchOwnedGamesFromSteamSession();
       if (owned?.games.length) {
-        const outDir = path.join(ROOT, "samples", "parsed");
-        await fs.mkdir(outDir, { recursive: true });
-        const outPath = path.join(outDir, "games-played.json");
-        await fs.writeFile(
-          outPath,
-          JSON.stringify(
-            {
-              steamId: owned.steamId,
-              source: "steam-session-api",
-              fetchedAt: new Date().toISOString(),
-              games: owned.games,
-            },
-            null,
-            2,
-          ),
-          "utf8",
-        );
-        console.log(
-          `Full library: ${owned.games.length} games → ${outPath}`,
-        );
+        // Atomic, owner-only, and never replaces a library with an empty one.
+        const saved = await saveOwnedGamesSnapshot(owned);
+        console.log(`Full library: ${saved.games} games → ${saved.path}`);
       } else {
         console.log(
           "Could not fetch full library via token; HTML games page may be partial (~25).",
         );
       }
     } catch (err) {
-      console.error("Owned-games fetch failed:", err);
+      // message only: an error object can carry a request URL with the token
+      console.error("Owned-games fetch failed:", safeErrorMessage(err));
     }
     console.log("Next: npm run parse:account-data (purchases/licenses); library playtime already saved if session API worked.");
   } finally {

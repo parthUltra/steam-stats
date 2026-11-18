@@ -1,7 +1,8 @@
 /**
- * Lightweight async concurrency helpers for I/O-bound Steam/CheapShark work.
+ * Lightweight async concurrency helpers for I/O-bound Steam / IsThereAnyDeal work.
  * Prefer these over worker_threads — fetch already overlaps on the event loop.
  */
+import { isPacingDisabled } from "@/lib/runtime";
 
 export async function mapPool<T, R>(
   items: readonly T[],
@@ -41,7 +42,7 @@ export function createRateLimiter(minIntervalMs: number): RateLimiter {
     const run = chain.then(async () => {
       const now = Date.now();
       const wait = Math.max(0, minIntervalMs - (now - lastStart));
-      if (wait > 0) {
+      if (wait > 0 && !isPacingDisabled()) {
         await new Promise((r) => setTimeout(r, wait));
       }
       lastStart = Date.now();
@@ -74,6 +75,7 @@ export function createWindowRateLimiter(
   function schedule<T>(fn: () => Promise<T>): Promise<T> {
     const run = chain.then(async () => {
       for (;;) {
+        if (isPacingDisabled()) break;
         const now = Date.now();
         while (starts.length > 0 && starts[0]! <= now - windowMs) {
           starts.shift();

@@ -7,7 +7,6 @@
  */
 import { type Browser, type Page } from "playwright";
 import fs from "node:fs/promises";
-import path from "node:path";
 import {
   importReceivedGiftsFromText,
   loadReceivedGifts,
@@ -16,13 +15,18 @@ import {
 import { parseSteamGiftEmails } from "@/lib/gifts/parse-steam-gift-email";
 import { connectUserBrowser } from "@/lib/browser/user-chrome";
 import { refreshPricesForTitles } from "@/lib/pricing/prices";
+import {
+  ensurePrivateDir,
+  writePrivateFile,
+} from "@/lib/process/private-files";
+import { rootPath } from "@/lib/runtime";
 
-const ROOT = process.cwd();
-const SESSION_DIR = path.join(ROOT, ".gmail-session");
-const BROWSER_PROFILE_DIR = path.join(SESSION_DIR, "browser-profile");
-const STATUS_FILE = path.join(SESSION_DIR, "status.json");
-const PID_FILE = path.join(SESSION_DIR, "sync.pid");
-const LAST_SCRAPE_FILE = path.join(SESSION_DIR, "last-scrape.txt");
+// Functions, not constants: the data root is resolved at call time.
+const sessionDir = () => rootPath(".gmail-session");
+const browserProfileDir = () => rootPath(".gmail-session", "browser-profile");
+const statusFile = () => rootPath(".gmail-session", "status.json");
+const pidFile = () => rootPath(".gmail-session", "sync.pid");
+const lastScrapeFile = () => rootPath(".gmail-session", "last-scrape.txt");
 
 /** One query covers Steam gift notifications — avoid looping 4 near-duplicate searches. */
 const PRIMARY_SEARCH =
@@ -45,6 +49,11 @@ const WAIT = {
   scrollSettle: 250,
   inboxReady: 600,
 } as const;
+
+/** Mail text is attacker-controlled: strip control characters before logging. */
+function printable(s: string): string {
+  return s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+}
 
 function looksLikeSteamGiftSubject(s: string): boolean {
   return /gift copy|received a gift|has given you|been sent a gift|ackgift/i.test(
@@ -91,12 +100,13 @@ export type GmailSyncResult = {
 };
 
 async function ensureSessionDir() {
-  await fs.mkdir(SESSION_DIR, { recursive: true });
+  // Holds a signed-in Gmail profile: owner-only.
+  await ensurePrivateDir(sessionDir());
 }
 
 export async function readGmailSyncStatus(): Promise<GmailSyncStatus> {
   try {
-    const raw = await fs.readFile(STATUS_FILE, "utf8");
+    const raw = await fs.readFile(statusFile(), "utf8");
     return JSON.parse(raw) as GmailSyncStatus;
   } catch {
     return { phase: "idle", updatedAt: "" };
@@ -114,17 +124,17 @@ async function writeStatus(
     updatedAt: new Date().toISOString(),
     pid: partial.pid ?? process.pid,
   };
-  await fs.writeFile(STATUS_FILE, JSON.stringify(next, null, 2));
+  await writePrivateFile(statusFile(), JSON.stringify(next, null, 2));
 }
 
 async function writePid() {
   await ensureSessionDir();
-  await fs.writeFile(PID_FILE, String(process.pid));
+  await writePrivateFile(pidFile(), String(process.pid));
 }
 
 async function clearPid() {
   try {
-    await fs.unlink(PID_FILE);
+    await fs.unlink(pidFile());
   } catch {
     // ignore
   }
@@ -141,7 +151,7 @@ function isPidAlive(pid: number): boolean {
 
 export async function isGmailSyncRunning(): Promise<boolean> {
   try {
-    const raw = await fs.readFile(PID_FILE, "utf8");
+    const raw = await fs.readFile(pidFile(), "utf8");
     const pid = Number(raw.trim());
     if (!Number.isFinite(pid) || pid <= 0) return false;
     if (!isPidAlive(pid)) {
@@ -507,7 +517,7 @@ async function openGiftRowsAndCollectBodies(
         if (subj) seenSubjects.add(subj);
         blobs.push(piece);
         console.log(
-          `  read body ${blobs.length}: ${subj.slice(0, 60) || "(no subject)"}`,
+          `  read body ${blobs.length}: ${printable(subj.slice(0, 60)) || "(no subject)"}`,
         );
       }
     } catch (err) {
@@ -558,7 +568,7 @@ async function openEachGiftSubject(
         message: `Reading sender ${i + 1}/${total}…`,
         messagesScanned: i + 1,
       });
-      console.log(`  focused search: ${query}`);
+      console.log(`  focused search: ${printable(query)}`);
       await runSearch(page, query);
       await page.waitForTimeout(WAIT.afterTypeSearch);
 
@@ -570,7 +580,7 @@ async function openEachGiftSubject(
         if (n > 0) {
           await rows.nth(0).click({ timeout: 4000 });
         } else {
-          console.warn(`  no row for: ${subject.slice(0, 50)}`);
+          console.warn(`  no row for: ${printable(subject.slice(0, 50))}`);
           await onProgress?.(i + 1, total);
           continue;
         }
@@ -597,7 +607,7 @@ async function openEachGiftSubject(
           /your friend\s+(.+?)\s+has given you/i,
         )?.[1];
         console.log(
-          `  sender mail ${blobs.length}: ${persona ? `from ${persona}` : subject.slice(0, 40)}`,
+          `  sender mail ${blobs.length}: ${printable(persona ? `from ${persona}` : subject.slice(0, 40))}`,
         );
       }
     } catch (err) {
@@ -674,7 +684,7 @@ async function scrapeGiftEmailText(page: Page): Promise<ScrapeResult> {
     );
     for (const s of subjects) allGiftSubjects.add(s);
     console.log(`  gift-like subjects: ${subjects.length}`);
-    for (const s of subjects.slice(0, 8)) console.log(`    · ${s}`);
+    for (const s of subjects.slice(0, 8)) console.log(`    · ${printable(s)}`);
 
     const giftRows = await giftRowIndexes(page);
     if (!subjects.length && !giftRows.length) {
@@ -779,9 +789,14 @@ async function scrapeGiftEmailText(page: Page): Promise<ScrapeResult> {
   const raw = [subjectsToRaw([...allGiftSubjects]), ...allBodies]
     .filter(Boolean)
     .join("\n\n----\n\n");
+  // Raw mail bodies are kept on disk only when explicitly debugging a scrape.
   try {
-    await ensureSessionDir();
-    await fs.writeFile(LAST_SCRAPE_FILE, raw || "(empty scrape)", "utf8");
+    if (process.env.STEAM_STATS_DEBUG_SCRAPE === "1") {
+      await ensureSessionDir();
+      await writePrivateFile(lastScrapeFile(), raw || "(empty scrape)");
+    } else {
+      await fs.unlink(lastScrapeFile()).catch(() => undefined);
+    }
   } catch {
     // ignore
   }
@@ -812,7 +827,7 @@ export async function syncGiftsFromGmail(): Promise<GmailSyncResult> {
   try {
     const attached = await connectUserBrowser({
       startUrl: "https://mail.google.com/mail/u/0/#inbox",
-      isolatedUserDataDir: BROWSER_PROFILE_DIR,
+      isolatedUserDataDir: browserProfileDir(),
       onStatus: async (message) => {
         await writeStatus({ phase: "starting", message });
       },
@@ -918,7 +933,11 @@ export async function syncGiftsFromGmail(): Promise<GmailSyncResult> {
     });
     console.log(message);
     for (const g of preview.slice(0, 20)) {
-      console.log(`  · ${g.title}${g.fromPersona ? ` (from ${g.fromPersona})` : ""}`);
+      console.log(
+        printable(
+          `  · ${g.title}${g.fromPersona ? ` (from ${g.fromPersona})` : ""}`,
+        ),
+      );
     }
     return result;
   } catch (err) {

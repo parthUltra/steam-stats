@@ -1,0 +1,1700 @@
+{
+  "kind": "purchase-history",
+  "status": "ok",
+  "rows": [
+    {
+      "dateText": "2 Oct, 2026",
+      "items": [
+        "Ironroot II"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 1,800",
+        "amount": 1800,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,800",
+        "amount": 1800,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4039",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "17 Apr, 2026",
+      "items": [
+        "Obsidian Tram"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 275",
+        "amount": 275,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 275",
+        "amount": 275,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4038",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "21 Mar, 2026",
+      "items": [
+        "Pyrewatch Eternal Standard Edition"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 449",
+        "amount": 449,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 449",
+        "amount": 449,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4037",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "14 Feb, 2026",
+      "items": [
+        "Tall Grass"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 715",
+        "amount": 715,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 715",
+        "amount": 715,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4036",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "26 Dec, 2025",
+      "items": [
+        "Wintering"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 89",
+        "amount": 89,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 899",
+        "amount": 899,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 89",
+        "amount": 89,
+        "currencyHint": "INR"
+      },
+      "discountPct": -90,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 89",
+        "amount": 89,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4035",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "9 Sep, 2025",
+      "items": [
+        "Sunken Arcade"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 150",
+        "amount": 150,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 600",
+        "amount": 600,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 150",
+        "amount": 150,
+        "currencyHint": "INR"
+      },
+      "discountPct": -75,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 150",
+        "amount": 150,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4034",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "24 Aug, 2025",
+      "items": [
+        "Digital Gift Card"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 2,000",
+        "amount": 2000,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 2,000",
+        "amount": 2000,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4033",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "2 Jun, 2025",
+      "items": [
+        "Marigold Engine"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 129",
+        "amount": 129,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 129",
+        "amount": 129,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4032",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "14 Mar, 2025",
+      "items": [
+        "Cinder Vale",
+        "Digital Gift Card"
+      ],
+      "lineItems": [
+        {
+          "name": "Cinder Vale",
+          "amount": 400,
+          "currencyHint": "INR",
+          "raw": "₹ 400"
+        },
+        {
+          "name": "Digital Gift Card",
+          "amount": 500,
+          "currencyHint": "INR",
+          "raw": "₹ 500"
+        }
+      ],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 900",
+        "amount": 900,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 900",
+        "amount": 900,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "5003",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "20 Feb, 2025",
+      "items": [
+        "Hearthbound"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 450",
+        "amount": 450,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 450",
+        "amount": 450,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4031",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "8 Feb, 2025",
+      "items": [
+        "Steam Community Market"
+      ],
+      "lineItems": [],
+      "type": "Market Transaction",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Wallet"
+      ],
+      "price": {
+        "raw": "₹ 45",
+        "amount": 45,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 45 Credit",
+        "amount": 45,
+        "currencyHint": "INR"
+      },
+      "walletChange": {
+        "raw": "+₹ 45",
+        "amount": 45,
+        "currencyHint": "INR"
+      },
+      "walletBalance": {
+        "raw": "₹ 725",
+        "amount": 725,
+        "currencyHint": "INR"
+      },
+      "transactionId": "4030",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": true
+    },
+    {
+      "dateText": "3 Feb, 2025",
+      "items": [
+        "Steam Community Market"
+      ],
+      "lineItems": [],
+      "type": "Market Transaction",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Wallet"
+      ],
+      "price": {
+        "raw": "₹ 120",
+        "amount": 120,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 120",
+        "amount": 120,
+        "currencyHint": "INR"
+      },
+      "walletChange": {
+        "raw": "-₹ 120",
+        "amount": -120,
+        "currencyHint": "INR"
+      },
+      "walletBalance": {
+        "raw": "₹ 680",
+        "amount": 680,
+        "currencyHint": "INR"
+      },
+      "transactionId": "4029",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": true
+    },
+    {
+      "dateText": "15 Jan, 2025",
+      "items": [
+        "Kestrel Run"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "₹ 200 Wallet",
+        "₹ 1,300 Visa"
+      ],
+      "price": {
+        "raw": "₹ 1,500",
+        "amount": 1500,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,500",
+        "amount": 1500,
+        "currencyHint": "INR"
+      },
+      "walletChange": {
+        "raw": "-₹ 200",
+        "amount": -200,
+        "currencyHint": "INR"
+      },
+      "walletBalance": {
+        "raw": "₹ 800",
+        "amount": 800,
+        "currencyHint": "INR"
+      },
+      "transactionId": "4028",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": true
+    },
+    {
+      "dateText": "10 Jan, 2025",
+      "items": [
+        "Purchased ₹ 1,000 Wallet Credit"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "walletChange": {
+        "raw": "+₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "walletBalance": {
+        "raw": "₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "transactionId": "4027",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": true
+    },
+    {
+      "dateText": "22 Dec, 2024",
+      "items": [
+        "Moss Kingdom",
+        "Tidebreaker"
+      ],
+      "lineItems": [
+        {
+          "name": "Moss Kingdom",
+          "amount": 450,
+          "currencyHint": "INR",
+          "raw": "₹ 450"
+        },
+        {
+          "name": "Tidebreaker",
+          "amount": 1050,
+          "currencyHint": "INR",
+          "raw": "₹ 1,050"
+        }
+      ],
+      "type": "Gift Purchase",
+      "isGift": true,
+      "giftRecipient": "nova_wren",
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 1,500",
+        "amount": 1500,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,500",
+        "amount": 1500,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "5004",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "28 Nov, 2024",
+      "items": [
+        "Farlight Courier"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 374",
+        "amount": 374,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 1,499",
+        "amount": 1499,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 374",
+        "amount": 374,
+        "currencyHint": "INR"
+      },
+      "discountPct": -75,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 374",
+        "amount": 374,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4026",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "3 Sep, 2024",
+      "items": [
+        "Lanternfall Collection"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 810",
+        "amount": 810,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 810",
+        "amount": 810,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4025",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "30 Jun, 2024",
+      "items": [
+        "Brass Meridian"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 1,299",
+        "amount": 1299,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 2,598",
+        "amount": 2598,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 1,299",
+        "amount": 1299,
+        "currencyHint": "INR"
+      },
+      "discountPct": -50,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,299",
+        "amount": 1299,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4024",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "19 May, 2024",
+      "items": [
+        "Hollow Circuit: Overclock"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 900",
+        "amount": 900,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 900",
+        "amount": 900,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4023",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "1 May, 2024",
+      "items": [
+        "Lowtide"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 199",
+        "amount": 199,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 199",
+        "amount": 199,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4022",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "6 Apr, 2024",
+      "items": [
+        "Saltwater Diner - Gourmet Edition"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 324",
+        "amount": 324,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 324",
+        "amount": 324,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4021",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "12 Jan, 2024",
+      "items": [
+        "Nine Lamps"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 549",
+        "amount": 549,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 549",
+        "amount": 549,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4020",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "12 Dec, 2023",
+      "items": [
+        "Lumen Drift",
+        "Ashfall Protocol"
+      ],
+      "lineItems": [
+        {
+          "name": "Lumen Drift",
+          "amount": 600,
+          "currencyHint": "INR",
+          "raw": "₹ 600"
+        },
+        {
+          "name": "Ashfall Protocol",
+          "amount": 400,
+          "currencyHint": "INR",
+          "raw": "₹ 400",
+          "refunded": true
+        }
+      ],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "5002",
+      "refunded": false,
+      "partiallyRefunded": true,
+      "refundedItems": [
+        "Ashfall Protocol"
+      ],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "11 Nov, 2023",
+      "items": [
+        "Voidrunner 2: Ultimate Edition"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 560",
+        "amount": 560,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 2,240",
+        "amount": 2240,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 560",
+        "amount": 560,
+        "currencyHint": "INR"
+      },
+      "discountPct": -75,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 560",
+        "amount": 560,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4019",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "22 Sep, 2023",
+      "items": [
+        "Signal Kite"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Mastercard"
+      ],
+      "price": {
+        "raw": "₹ 1,250",
+        "amount": 1250,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,250",
+        "amount": 1250,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4018",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "7 Aug, 2023",
+      "items": [
+        "Broken Compass"
+      ],
+      "lineItems": [],
+      "type": "Refund",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 799",
+        "amount": 799,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 799",
+        "amount": 799,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4017",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "5 Aug, 2023",
+      "items": [
+        "Broken Compass"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 799",
+        "amount": 799,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 799",
+        "amount": 799,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4016",
+      "refunded": true,
+      "partiallyRefunded": false,
+      "refundedItems": [
+        "Broken Compass"
+      ],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "7 Jul, 2023",
+      "items": [
+        "Anvil Saga: The Complete Collection"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 224",
+        "amount": 224,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 899",
+        "amount": 899,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 224",
+        "amount": 224,
+        "currencyHint": "INR"
+      },
+      "discountPct": -75,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 224",
+        "amount": 224,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4015",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "24 Jun, 2023",
+      "items": [
+        "Quiet Harbor",
+        "Moss Kingdom",
+        "Nightglass"
+      ],
+      "lineItems": [
+        {
+          "name": "Quiet Harbor",
+          "amount": 300,
+          "currencyHint": "INR",
+          "raw": "₹ 300"
+        },
+        {
+          "name": "Moss Kingdom",
+          "amount": 450,
+          "currencyHint": "INR",
+          "raw": "₹ 450"
+        },
+        {
+          "name": "Nightglass",
+          "amount": 250,
+          "currencyHint": "INR",
+          "raw": "₹ 250"
+        }
+      ],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 2,500",
+        "amount": 2500,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "discountPct": -60,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,000",
+        "amount": 1000,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "5001",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "3 Mar, 2023",
+      "items": [
+        "Rustline Rally"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 599",
+        "amount": 599,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 599",
+        "amount": 599,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4014",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "20 Dec, 2022",
+      "items": [
+        "Glass Orchard"
+      ],
+      "lineItems": [],
+      "type": "Gift Purchase",
+      "isGift": true,
+      "giftRecipient": "pixel_otter",
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 499",
+        "amount": 499,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 499",
+        "amount": 499,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4013",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "25 Nov, 2022",
+      "items": [
+        "Glass Orchard"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 249",
+        "amount": 249,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 999",
+        "amount": 999,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 249",
+        "amount": 249,
+        "currencyHint": "INR"
+      },
+      "discountPct": -75,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 249",
+        "amount": 249,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4012",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "8 Oct, 2022",
+      "items": [
+        "Pyrewatch"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 399",
+        "amount": 399,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 399",
+        "amount": 399,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4011",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "30 Jul, 2022",
+      "items": [
+        "Thimblewood"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 199",
+        "amount": 199,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 398",
+        "amount": 398,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 199",
+        "amount": 199,
+        "currencyHint": "INR"
+      },
+      "discountPct": -50,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 199",
+        "amount": 199,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4010",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "9 Jul, 2022",
+      "items": [
+        "Tidebreaker"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Mastercard"
+      ],
+      "price": {
+        "raw": "₹ 1,499",
+        "amount": 1499,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,499",
+        "amount": 1499,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4009",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "14 Feb, 2022",
+      "items": [
+        "Paper Lanterns™"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 349",
+        "amount": 349,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 349",
+        "amount": 349,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4008",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "2 Jan, 2022",
+      "items": [
+        "Hollow Circuit"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 480",
+        "amount": 480,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 1,200",
+        "amount": 1200,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 480",
+        "amount": 480,
+        "currencyHint": "INR"
+      },
+      "discountPct": -60,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 480",
+        "amount": 480,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4007",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "5 Dec, 2021",
+      "items": [
+        "Starfall Tactics - Crimson Front"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 299",
+        "amount": 299,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 299",
+        "amount": 299,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4006",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "16 Oct, 2021",
+      "items": [
+        "Copper Sparrow"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 1,049",
+        "amount": 1049,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,049",
+        "amount": 1049,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4005",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "18 Aug, 2021",
+      "items": [
+        "Ironroot"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 700",
+        "amount": 700,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 700",
+        "amount": 700,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4004",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "27 Jun, 2021",
+      "items": [
+        "Emberwake"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "Visa"
+      ],
+      "price": {
+        "raw": "₹ 1,199",
+        "amount": 1199,
+        "currencyHint": "INR"
+      },
+      "originalPrice": {
+        "raw": "₹ 1,999",
+        "amount": 1999,
+        "currencyHint": "INR"
+      },
+      "discountedPrice": {
+        "raw": "₹ 1,199",
+        "amount": 1199,
+        "currencyHint": "INR"
+      },
+      "discountPct": -40,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 1,199",
+        "amount": 1199,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4003",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "4 Apr, 2021",
+      "items": [
+        "Vesper Lines"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 649",
+        "amount": 649,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 649",
+        "amount": 649,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4002",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    },
+    {
+      "dateText": "12 Mar, 2021",
+      "items": [
+        "Starfall Tactics"
+      ],
+      "lineItems": [],
+      "type": "Purchase",
+      "isGift": false,
+      "giftRecipient": null,
+      "paymentMethods": [
+        "UPI"
+      ],
+      "price": {
+        "raw": "₹ 899",
+        "amount": 899,
+        "currencyHint": "INR"
+      },
+      "originalPrice": null,
+      "discountedPrice": null,
+      "discountPct": null,
+      "tax": null,
+      "shipping": null,
+      "total": {
+        "raw": "₹ 899",
+        "amount": 899,
+        "currencyHint": "INR"
+      },
+      "walletChange": null,
+      "walletBalance": null,
+      "transactionId": "4001",
+      "refunded": false,
+      "partiallyRefunded": false,
+      "refundedItems": [],
+      "isWalletBalanceChange": false
+    }
+  ]
+}

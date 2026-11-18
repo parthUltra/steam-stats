@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import type { ReactNode } from "react";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { trapTab } from "@/components/ui/dialog";
 
-const FOCUSABLE =
-  "a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex='-1'])";
-
+/**
+ * Centered modal card. `className` styles the full-screen overlay and
+ * `cardClassName` the card inside it.
+ *
+ * Built on Base UI Dialog: focus moves into the card, Tab stays inside, Escape
+ * and a press on the overlay close it (unless `busy`), page scroll locks, and
+ * focus returns to the control that opened it.
+ */
 export function ModalShell({
   open,
   onClose,
@@ -23,63 +29,25 @@ export function ModalShell({
   busy?: boolean;
   children: ReactNode;
 }) {
-  const cardRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.activeElement as HTMLElement | null;
-    const card = cardRef.current;
-    const focusables = () =>
-      [...(card?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])].filter(
-        (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1,
-      );
-    focusables()[0]?.focus();
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (busy) return;
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const items = focusables();
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      prev?.focus();
-    };
-  }, [open, busy, onClose]);
-
-  if (!open || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className={className}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={labelledBy}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
+  return (
+    <DialogPrimitive.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !busy) onClose();
       }}
     >
-      <div ref={cardRef} className={cardClassName}>
-        {children}
-      </div>
-    </div>,
-    document.body,
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Popup
+          className={className}
+          aria-labelledby={labelledBy}
+          onKeyDown={trapTab}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !busy) onClose();
+          }}
+        >
+          <div className={cardClassName}>{children}</div>
+        </DialogPrimitive.Popup>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

@@ -2,7 +2,7 @@ import { titlesSoftMatch, normTitle } from "@/lib/analytics/acquisition";
 
 export type ParsedGiftEmail = {
   title: string;
-  /** Steam persona who sent the gift (e.g. "ded"), when present in the body */
+  /** Steam persona who sent the gift (e.g. "friend-two"), when present in the body */
   fromPersona?: string;
   sender?: string;
   subject?: string;
@@ -11,28 +11,64 @@ export type ParsedGiftEmail = {
   source: "subject" | "body" | "link";
 };
 
+const utf8Strict = new TextDecoder("utf-8", { fatal: true });
+const latin1 = new TextDecoder("latin1");
+
+/**
+ * Decode quoted-printable. "=E2=84=A2" is three *bytes* of one UTF-8
+ * character (™), so a whole run of escapes is decoded together — turning each
+ * byte into its own character gives "â\u0084¢". Escapes are upper-case hex
+ * (RFC 2045), which also keeps a literal "a=b" in a gift note intact.
+ */
+function decodeQuotedPrintable(text: string): string {
+  return text
+    .replace(/=\r?\n/g, "") // soft line breaks
+    .replace(/(?:=[0-9A-F]{2})+/g, (run) => {
+      const bytes = Uint8Array.from(
+        run.split("=").slice(1),
+        (hex) => parseInt(hex, 16),
+      );
+      try {
+        return utf8Strict.decode(bytes);
+      } catch {
+        // not UTF-8: an ISO-8859-1 mail
+        return latin1.decode(bytes);
+      }
+    });
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  nbsp: " ",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  trade: "™",
+  reg: "®",
+  copy: "©",
+};
+
+function decodeEntities(text: string): string {
+  return text.replace(
+    /&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi,
+    (whole, dec?: string, hex?: string, name?: string) => {
+      if (name) return NAMED_ENTITIES[name.toLowerCase()] ?? whole;
+      const code = dec ? Number(dec) : parseInt(hex!, 16);
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+    },
+  );
+}
+
 /** Decode common email transfer encodings enough for Steam gift text. */
 function decodeEmailBody(raw: string): string {
-  let text = raw;
-  // Quoted-printable soft line breaks
-  text = text.replace(/=\r?\n/g, "");
-  text = text.replace(/=([0-9A-Fa-f]{2})/g, (_, hex: string) =>
-    String.fromCharCode(parseInt(hex, 16)),
-  );
   // Very light HTML → text
-  text = text
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#(\d+);/g, (_, n: string) =>
-      String.fromCharCode(Number(n)),
-    )
-    .replace(/&quot;/gi, '"');
-  return text;
+  return decodeEntities(
+    decodeQuotedPrintable(raw)
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  );
 }
 
 /**
@@ -66,8 +102,10 @@ function cleanTitle(raw: string): string | null {
     .replace(/^["'`]+|["'`]+$/g, "")
     .replace(/\s*\.+$/g, "")
     .trim();
-  // Steam subjects often insert "the game" before the title
-  t = t.replace(/^(?:the\s+)?game\s+/i, "").trim();
+  // Steam's template says "… a gift copy of the game <Title>". Only that exact
+  // lower-case phrase is boilerplate; "Game Dev Tycoon" and "The Game of
+  // Life 2" are titles.
+  t = t.replace(/^the game\s+(?=\S)/, "").trim();
   // Drop trailing boilerplate
   t = t
     .replace(/\s+on Steam$/i, "")
@@ -163,7 +201,7 @@ function extractDateHeader(decoded: string): string | undefined {
 function personasByTitleInChunk(decoded: string): Map<string, string> {
   const map = new Map<string, string>();
   const patterns = [
-    /your friend\s+(.+?)\s+has given you\s+a gift subscription to(?:\s+the game)?\s+([\s\S]+?)\s+on Steam/gi,
+    /your friend\s+(.+?)\s+has given you\s+a gift subscription to\s+([\s\S]+?)\s+on Steam/gi,
     /your friend\s+(.+?)\s+has given you\s+(?!a gift subscription)([\s\S]+?)\s+on Steam/gi,
   ];
   for (const re of patterns) {
@@ -183,9 +221,9 @@ function personasByTitleInChunk(decoded: string): Map<string, string> {
  * Extract gift game titles from Steam gift notification email text / .eml.
  *
  * Formats:
- *   Subject: You've received a gift copy of the game PEAK on Steam
- *   Body:    Your friend ded has given you PEAK on Steam.
- *   Body:    Your friend 0nePunch has given you a gift subscription to the game
+ *   Subject: You've received a gift copy of the game SKYLINE on Steam
+ *   Body:    Your friend friend-one has given you SKYLINE on Steam.
+ *   Body:    Your friend friend-one has given you a gift subscription to the game
  *            Terraria on Steam.
  *   Link:    https://store.steampowered.com/account/ackgift/…
  */
@@ -224,10 +262,10 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
 
     if (subject) {
       const subPatterns = [
-        /you(?:'ve| have) received a gift copy of(?:\s+the game)?\s+(.+?)(?:\s+on Steam)?$/i,
-        /you(?:'ve| have) been sent a gift(?: copy)? of(?:\s+the game)?\s+(.+?)(?:\s+on Steam)?$/i,
-        /received a gift(?: copy)?(?: of)?(?:\s+the game)?\s+(.+?)(?:\s+on Steam)?$/i,
-        /gift copy of(?:\s+the game)?\s+(.+?)(?:\s+on Steam)?$/i,
+        /you(?:'ve| have) received a gift copy of\s+(.+?)(?:\s+on Steam)?$/i,
+        /you(?:'ve| have) been sent a gift(?: copy)? of\s+(.+?)(?:\s+on Steam)?$/i,
+        /received a gift(?: copy)?(?: of)?\s+(.+?)(?:\s+on Steam)?$/i,
+        /gift copy of\s+(.+?)(?:\s+on Steam)?$/i,
         /^(.+?)\s+[—–-]\s+you(?:'ve| have) received a gift/i,
         /sent you a gift:\s*(.+)$/i,
       ];
@@ -245,10 +283,10 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
       }
     }
 
-    // Direct gift: "Your friend ded has given you PEAK on Steam."
+    // Direct gift: "Your friend friend-one has given you SKYLINE on Steam."
     // Subscription (often wraps): "... given you a gift subscription to the game\nTerraria on Steam."
     const givenPatterns = [
-      /(?:your friend\s+(.+?)\s+)?has given you\s+a gift subscription to(?:\s+the game)?\s+([\s\S]+?)\s+on Steam/gi,
+      /(?:your friend\s+(.+?)\s+)?has given you\s+a gift subscription to\s+([\s\S]+?)\s+on Steam/gi,
       /(?:your friend\s+(.+?)\s+)?has given you\s+(?!a gift subscription)([\s\S]+?)\s+on Steam/gi,
     ];
     for (const givenRe of givenPatterns) {
@@ -269,9 +307,9 @@ export function parseSteamGiftEmails(rawInput: string): ParsedGiftEmail[] {
     }
 
     const bodyPatterns = [
-      /(?:has|have) sent you a gift copy of(?:\s+the game)?\s+(.+?)(?:\s+on Steam)?(?:[.!]|\n|$)/gi,
+      /(?:has|have) sent you a gift copy of\s+(.+?)(?:\s+on Steam)?(?:[.!]|\n|$)/gi,
       /sent you\s+(.+?)\s+as a gift/gi,
-      /you(?:'ve| have) received a gift copy of(?:\s+the game)?\s+(.+?)(?:\s+on Steam)?(?:[.!]|\n|$)/gi,
+      /you(?:'ve| have) received a gift copy of\s+(.+?)(?:\s+on Steam)?(?:[.!]|\n|$)/gi,
       /accept (?:your |the )?gift of\s+(.+?)(?:[.!]|\n|$)/gi,
     ];
     for (const re of bodyPatterns) {

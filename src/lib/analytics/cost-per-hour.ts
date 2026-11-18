@@ -1,9 +1,15 @@
 import type { PlayedGame } from "@/lib/account-data";
-import type { ValuationGame } from "@/lib/analytics/valuation";
+import {
+  effectiveShelfNow,
+  type ValuationGame,
+} from "@/lib/analytics/valuation";
+import { packCoversTitle, titlesSoftMatch } from "@/lib/analytics/acquisition";
 import {
   isBundleTitle,
+  isRedundantPackSku,
   stripEditionSuffix,
 } from "@/lib/analytics/edition-packs";
+import { normTitle as norm } from "@/lib/titles";
 import {
   resolveSteamAppId,
   sourcesFromPlaytime,
@@ -34,7 +40,18 @@ export type CostPerHourAnalytics = {
   unplayedPaid: CostPerHourGame[];
   blendedCostPerHour: number | null;
   totalPaidMatched: number;
+  /**
+   * @deprecated Same value as `totalHoursRateDivisor`. Not hours played: each
+   * title under 1 h counts as 1 h here.
+   */
   totalHoursMatched: number;
+  /**
+   * Divisor of `blendedCostPerHour`: hours of the played paid titles with each
+   * title floored at 1 h (so a rate never exceeds what was paid).
+   */
+  totalHoursRateDivisor: number;
+  /** Hours actually played across the same titles — the figure to display. */
+  totalHoursPlayed: number;
   bestValue: CostPerHourGame | null;
   worstValue: CostPerHourGame | null;
   biggestUnplayed: CostPerHourGame | null;
@@ -42,14 +59,11 @@ export type CostPerHourAnalytics = {
   note: string;
 };
 
-function norm(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/™|®/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
+/**
+ * The playtime row for a shelf row. Identity first (app id, exact name), then
+ * an edition / store SKU of a played title. Never a title that merely shares
+ * a prefix: a sequel or a "Base: Subtitle" game has its own hours or none.
+ */
 function matchPlaytime(
   game: ValuationGame,
   byAppId: Map<number, PlayedGame>,
@@ -60,8 +74,7 @@ function matchPlaytime(
     const hit = byAppId.get(game.steamAppId);
     if (hit) return hit;
   }
-  const key = norm(game.title);
-  const exact = byName.get(key);
+  const exact = byName.get(norm(game.title));
   if (exact) return exact;
 
   const baseKey = stripEditionSuffix(game.title);
@@ -70,31 +83,58 @@ function matchPlaytime(
     if (base) return base;
   }
 
-  const resolvedId = resolveSteamAppId(game.title, [
-    ...sourcesFromPlaytime(playtimeGames),
-  ]);
-  if (resolvedId != null) {
-    const hit = byAppId.get(resolvedId);
-    if (hit) return hit;
-  }
-
+  // "X: Ultimate Edition" ↔ "X" — the remainder is only an edition label
   let best: PlayedGame | null = null;
   for (const p of playtimeGames) {
-    const t = norm(p.name);
-    if (t.length < 3) continue;
-    if (
-      key.startsWith(`${t}:`) ||
-      key.startsWith(`${t} -`) ||
-      key.startsWith(`${t} `) ||
-      (baseKey &&
-        (baseKey === t ||
-          baseKey.startsWith(`${t}:`) ||
-          baseKey.startsWith(`${t} `)))
-    ) {
-      if (!best || t.length > norm(best.name).length) best = p;
-    }
+    if (!titlesSoftMatch(game.title, p.name)) continue;
+    if (!best || p.name.length > best.name.length) best = p;
   }
-  return best;
+  if (best) return best;
+
+  // A row priced as its own app that has no playtime row was not played.
+  // Only an unpriced row (store SKU names like "… (ROW)") is looked up by
+  // title, and that lookup rejects sequels.
+  if (game.steamAppId != null) return null;
+  const resolvedId = resolveSteamAppId(
+    game.title,
+    sourcesFromPlaytime(playtimeGames),
+  );
+  return resolvedId == null ? null : (byAppId.get(resolvedId) ?? null);
+}
+
+/**
+ * Split each multi-game pack's price across the shelf games it covers, in
+ * proportion to their shelf price (evenly when none is priced). Returns the
+ * packs that were split and the share each covered game received.
+ */
+function splitPackPrices(
+  shelf: ValuationGame[],
+  includeGifts: boolean,
+): { packs: Set<ValuationGame>; shares: Map<ValuationGame, number> } {
+  const packs = new Set<ValuationGame>();
+  const shares = new Map<ValuationGame, number>();
+  const eligible = (g: ValuationGame) => includeGifts || !g.isGift;
+
+  for (const pack of shelf) {
+    if (!eligible(pack) || pack.paid == null || pack.paid <= 0) continue;
+    if (!isRedundantPackSku(pack, shelf)) continue;
+    const members = shelf.filter(
+      (g) =>
+        g !== pack &&
+        eligible(g) &&
+        !isBundleTitle(g.title) &&
+        packCoversTitle(pack.title, g.title),
+    );
+    if (!members.length) continue;
+    const prices = members.map((g) => effectiveShelfNow(g) ?? 0);
+    const total = prices.reduce((a, b) => a + b, 0);
+    members.forEach((g, i) => {
+      const weight = total > 0 ? prices[i] / total : 1 / members.length;
+      shares.set(g, (shares.get(g) ?? 0) + pack.paid! * weight);
+    });
+    packs.add(pack);
+  }
+  return { packs, shares };
 }
 
 /** Hours used as the cost/hr divisor — at least 1h so rate ≤ paid. */
@@ -118,26 +158,34 @@ export function buildCostPerHourAnalytics(
 
   const games: CostPerHourGame[] = [];
 
+  // A single-app "Collection" (Halo MCC) is a game like any other. Only a
+  // pack whose games are on the shelf is left out as a row — its price moves
+  // onto those games.
+  const { packs, shares } = splitPackPrices(valuationGames, includeGifts);
+
   for (const g of valuationGames) {
     if (!includeGifts && g.isGift) continue;
-    if (g.paid == null || g.paid <= 0) continue;
-    if (isBundleTitle(g.title)) continue;
+    if (packs.has(g)) continue;
+    const paid = (g.paid ?? 0) + (shares.get(g) ?? 0);
+    if (paid <= 0) continue;
 
     const played = matchPlaytime(g, byAppId, byName, playtimeGames);
-    const hours = played?.hoursForever ?? 0;
+    const rawHours = played?.hoursForever;
+    const hours =
+      typeof rawHours === "number" && Number.isFinite(rawHours) ? rawHours : 0;
     const rateable = hours >= MIN_PLAYED_HOURS_FOR_RATE;
     const steamAppId =
       played?.appId ??
-      resolveSteamAppId(g.title, idSources) ??
       g.steamAppId ??
+      resolveSteamAppId(g.title, idSources) ??
       null;
 
     games.push({
       title: g.title,
       steamAppId,
-      paid: g.paid,
+      paid,
       hours,
-      costPerHour: rateable ? g.paid / hoursForCostRate(hours) : null,
+      costPerHour: rateable ? paid / hoursForCostRate(hours) : null,
       current: g.current,
       isGift: g.isGift,
     });
@@ -172,10 +220,12 @@ export function buildCostPerHourAnalytics(
     blendedCostPerHour,
     totalPaidMatched,
     totalHoursMatched,
+    totalHoursRateDivisor: totalHoursMatched,
+    totalHoursPlayed: playedPaid.reduce((s, g) => s + g.hours, 0),
     bestValue: playedPaid[0] ?? null,
     worstValue: playedPaid.length ? playedPaid[playedPaid.length - 1] : null,
     biggestUnplayed: unplayedPaid[0] ?? null,
     matchedCount: games.length,
-    note: "Cost/hr uses paid from purchase line items and lifetime hours from Account Data / Steam API. Under 1 hour played counts as 1 hour (so cost/hr never exceeds what you paid). Edition packs roll into the base when both are owned. Bundles are excluded. Under 30 minutes counts as unplayed.",
+    note: "Cost/hr uses paid from purchase line items and lifetime hours from Account Data / Steam API. Under 1 hour played counts as 1 hour (so cost/hr never exceeds what you paid). Edition packs roll into the base when both are owned. A collection / bundle's price is split across the games it includes, by shelf price. Under 30 minutes counts as unplayed.",
   };
 }

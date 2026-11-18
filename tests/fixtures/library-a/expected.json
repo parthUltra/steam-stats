@@ -1,0 +1,141 @@
+{
+  "$comment": [
+    "HAND-DERIVED from the rows in tests/fixtures/build-library-a.ts. This is what a correct implementation must output for this library.",
+    "It is NOT a snapshot of application output and must never be regenerated from it. Derivations are in README.md next to this file.",
+    "When an assertion against this file fails, fix the code (or prove the derivation wrong) - do not edit the number to match."
+  ],
+  "meta": {
+    "purchaseRows": 43,
+    "licenseRows": 43,
+    "storeCountry": "IN",
+    "storeCurrency": "INR",
+    "mailGiftsCount": 1
+  },
+  "playtime": {
+    "steamId": "76561197960265728",
+    "source": "steam-api",
+    "gamesInSnapshot": 44,
+    "gameCount": 45,
+    "gamesPlayed": 41,
+    "totalHours": 2492.5,
+    "recentHours2Weeks": 23.1,
+    "topGameAppId": 9000001,
+    "familyAppIds": [9000041]
+  },
+  "spending": {
+    "currency": "INR",
+    "netSpent": 22615,
+    "purchaseCount": 35,
+    "refundedTotal": 1199,
+    "giftSpend": 4499,
+    "walletTopUps": 1000,
+    "marketSpendAccepted": [120, 75],
+    "marketSpendBuggy": 165,
+    "onSaleCount": 11,
+    "pctBoughtOnSale": 31.428571428571427,
+    "avgDiscountWhenOnSale": 65.9090909090909,
+    "saleSavings": 10008,
+    "yearly": {
+      "2021": { "spent": 4795, "count": 6 },
+      "2022": { "spent": 3175, "count": 6 },
+      "2023": { "spent": 4233, "count": 6 },
+      "2024": { "spent": 4455, "count": 7 },
+      "2025": { "spent": 2718, "count": 6 },
+      "2026": { "spent": 3239, "count": 4 }
+    },
+    "paymentMethods": {
+      "UPI": 11375,
+      "Visa": 8291,
+      "Mastercard": 2749,
+      "Steam Wallet": 200
+    },
+    "valveSpendUsd": {
+      "totalSpend": 512.34,
+      "packageOnlySpend": 431.2,
+      "packageOnlySavings": 188.75
+    }
+  },
+  "valuation": {
+    "librarySpent": 22615,
+    "shelfNow": 44210,
+    "shelfLowest": 16766,
+    "giftsReceived": { "appIds": [9000042, 9000043], "current": 1848, "lowest": 703 },
+    "giftsSent": [
+      { "title": "Glass Orchard", "paid": 499, "giftedTo": "pixel_otter" },
+      { "title": "Moss Kingdom", "paid": 450, "giftedTo": "nova_wren" },
+      { "title": "Tidebreaker", "paid": 1050, "giftedTo": "nova_wren" }
+    ],
+    "notOnShelfAppIds": [9000040, 9000041],
+    "unresolved": { "appId": 9000028, "title": "Obsidian Tram", "paid": 275 },
+    "pack": { "title": "Lanternfall Collection", "paid": 810 },
+    "apps": {
+      "9000001": { "title": "Starfall Tactics", "kind": "purchased", "paid": 1198, "now": 1698, "lowest": 648 },
+      "9000002": { "title": "Emberwake", "kind": "purchased", "paid": 1199, "now": 1999, "lowest": 799 },
+      "9000003": { "title": "Hollow Circuit", "kind": "purchased", "paid": 480, "now": 1200, "lowest": 360 },
+      "9000004": { "title": "Paper Lanterns", "kind": "purchased", "paid": 349, "now": 529, "lowest": 174 },
+      "9000005": { "title": "Tidebreaker", "kind": "purchased", "paid": 1499, "now": 2499, "lowest": 999 },
+      "9000006": { "title": "Glass Orchard", "kind": "purchased", "paid": 249, "now": 999, "lowest": 199 },
+      "9000007": { "title": "Rustline Rally", "kind": "purchased", "paid": 599, "now": 299, "lowest": 299 },
+      "9000008": { "title": "Ironroot", "kind": "purchased", "paid": 700, "now": 1100, "lowest": 275 },
+      "9000009": { "title": "Ironroot II", "kind": "purchased", "paid": 1800, "now": 1800, "lowest": 1620 },
+      "9000010": { "title": "Voidrunner 2", "kind": "purchased", "paid": 560, "now": 1499, "lowest": 374 },
+      "9000011": { "title": "Saltwater Diner", "kind": "purchased", "paid": 324, "now": 649, "lowest": 162 },
+      "9000012": { "title": "Lowtide", "kind": "purchased", "paid": 199, "now": 399, "lowest": 99 },
+      "9000013": { "title": "Brass Meridian", "kind": "purchased", "paid": 1299, "now": 2598, "lowest": 1299 },
+      "9000014": { "title": "Kestrel Run", "kind": "purchased", "paid": 1500, "now": 1999, "lowest": 999 },
+      "9000015": { "title": "Hearthbound", "kind": "purchased", "paid": 450, "now": 900, "lowest": 225 },
+      "9000016": { "title": "Sunken Arcade", "kind": "purchased", "paid": 150, "now": 600, "lowest": 150 },
+      "9000017": { "title": "Quiet Harbor", "kind": "purchased", "paid": 300, "now": 750, "lowest": 300 },
+      "9000018": { "title": "Moss Kingdom", "kind": "purchased", "paid": 450, "now": 1125, "lowest": 450 },
+      "9000019": { "title": "Nightglass", "kind": "purchased", "paid": 250, "now": 625, "lowest": 250 },
+      "9000020": { "title": "Lumen Drift", "kind": "purchased", "paid": 600, "now": 1200, "lowest": 600 },
+      "9000021": { "title": "Cinder Vale", "kind": "purchased", "paid": 400, "now": 800, "lowest": 400 },
+      "9000022": { "title": "Hollow Circuit: Overclock", "kind": "purchased", "paid": 900, "now": 1500, "lowest": 750 },
+      "9000023": { "title": "Anvil Saga: The Complete Collection", "kind": "purchased", "paid": 224, "now": 899, "lowest": 224 },
+      "9000024": { "title": "Lanternfall", "kind": "bundle", "paid": 0, "now": 700, "lowest": 175 },
+      "9000025": { "title": "Lanternfall Remnant", "kind": "bundle", "paid": 0, "now": 500, "lowest": 125 },
+      "9000026": { "title": "Pyrewatch", "kind": "purchased", "paid": 399, "now": 799, "lowest": 199 },
+      "9000027": { "title": "Pyrewatch Eternal", "kind": "purchased", "paid": 449, "now": 1799, "lowest": 449 },
+      "9000029": { "title": "Vesper Lines", "kind": "purchased", "paid": 649, "now": 949, "lowest": 237 },
+      "9000030": { "title": "Copper Sparrow", "kind": "purchased", "paid": 1049, "now": 1499, "lowest": 524 },
+      "9000031": { "title": "Thimblewood", "kind": "purchased", "paid": 199, "now": 398, "lowest": 99 },
+      "9000032": { "title": "Nine Lamps", "kind": "purchased", "paid": 549, "now": 799, "lowest": 274 },
+      "9000033": { "title": "Farlight Courier", "kind": "purchased", "paid": 374, "now": 1499, "lowest": 374 },
+      "9000034": { "title": "Marigold Engine", "kind": "purchased", "paid": 129, "now": 259, "lowest": 64 },
+      "9000035": { "title": "Wintering", "kind": "purchased", "paid": 89, "now": 899, "lowest": 89 },
+      "9000036": { "title": "Tall Grass", "kind": "purchased", "paid": 715, "now": 1100, "lowest": 550 },
+      "9000037": { "title": "Signal Kite", "kind": "purchased", "paid": 1250, "now": 2499, "lowest": 1249 },
+      "9000038": { "title": "Skyline Brawl", "kind": "free", "paid": 0, "now": 0, "lowest": 0 },
+      "9000039": { "title": "Driftwood Tales", "kind": "free", "paid": 0, "now": 499, "lowest": 0 },
+      "9000042": { "title": "Marrow Deep", "kind": "gifted_to_me", "paid": 0, "now": 1499, "lowest": 599 },
+      "9000043": { "title": "Pocket Cartographer", "kind": "gifted_to_me", "paid": 0, "now": 349, "lowest": 104 },
+      "9000044": { "title": "Bramble Post", "kind": "free", "paid": 0, "now": 299, "lowest": 0 },
+      "9000045": { "title": "Oddment Hotel", "kind": "free", "paid": 0, "now": 199, "lowest": 0 }
+    }
+  },
+  "costPerHour": {
+    "played": {
+      "9000001": { "paid": 1198, "hours": 412.5, "costPerHour": 2.904242424242424 },
+      "9000003": { "paid": 480, "hours": 173.2, "costPerHour": 2.771362586605081 },
+      "9000008": { "paid": 700, "hours": 120, "costPerHour": 5.833333333333333 },
+      "9000010": { "paid": 560, "hours": 52, "costPerHour": 10.76923076923077 },
+      "9000011": { "paid": 324, "hours": 23, "costPerHour": 14.08695652173913 },
+      "9000014": { "paid": 1500, "hours": 90, "costPerHour": 16.666666666666668 },
+      "9000015": { "paid": 450, "hours": 0.5, "costPerHour": 450 },
+      "9000022": { "paid": 900, "hours": 64, "costPerHour": 14.0625 },
+      "9000023": { "paid": 224, "hours": 30, "costPerHour": 7.466666666666667 },
+      "9000026": { "paid": 399, "hours": 20, "costPerHour": 19.95 },
+      "9000027": { "paid": 449, "hours": 35, "costPerHour": 12.82857142857143 },
+      "9000036": { "paid": 715, "hours": 1.6, "costPerHour": 446.875 }
+    },
+    "unplayed": {
+      "9000009": { "paid": 1800, "hours": 0 },
+      "9000012": { "paid": 199, "hours": 0.4 },
+      "9000013": { "paid": 1299, "hours": 0 },
+      "9000035": { "paid": 89, "hours": 0 }
+    },
+    "bestValueAppId": 9000003,
+    "worstValueAppId": 9000015,
+    "biggestUnplayedAppId": 9000009
+  }
+}

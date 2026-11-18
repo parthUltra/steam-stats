@@ -1,0 +1,38 @@
+{
+  "kind": "login-history",
+  "status": "ok",
+  "rows": [
+    {
+      "loginTime": "2026-10-14 21:02:11",
+      "logoffTime": "2026-10-14 23:40:52",
+      "osType": "Windows 11",
+      "country": "IN",
+      "city": "Bengaluru",
+      "state": "KA"
+    },
+    {
+      "loginTime": "2026-10-13 20:15:40",
+      "logoffTime": "2026-10-13 22:31:07",
+      "osType": "Windows 11",
+      "country": "IN",
+      "city": "Bengaluru",
+      "state": "KA"
+    },
+    {
+      "loginTime": "2026-10-11 19:48:03",
+      "logoffTime": "2026-10-11 22:10:19",
+      "osType": "SteamOS",
+      "country": "IN",
+      "city": "Bengaluru",
+      "state": "KA"
+    },
+    {
+      "loginTime": "2026-10-09 17:20:55",
+      "logoffTime": "2026-10-09 18:44:30",
+      "osType": "Windows 11",
+      "country": "IN",
+      "city": "Bengaluru",
+      "state": "KA"
+    }
+  ]
+}

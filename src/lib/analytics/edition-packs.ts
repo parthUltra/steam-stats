@@ -3,15 +3,7 @@ import {
   packCoversTitle,
   titlesSoftMatch,
 } from "@/lib/analytics/acquisition";
-
-function norm(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/™|®/g, "")
-    .replace(/&copy;/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+import { normTitle as norm } from "@/lib/titles";
 
 /** Store packages / multi-game SKUs — not a single playable game for shelf now. */
 export function isBundleTitle(title: string): boolean {
@@ -106,8 +98,9 @@ export function stripEditionSuffix(title: string): string | null {
     /\s+hd remaster$/,
     /\s*[-:–—]\s*remastered$/,
     /\s+remastered$/,
-    /\s*[-:–—]\s*vr(?:\s+edition)?$/,
-    /\s+vr(?:\s+edition)?$/,
+    // "VR Edition" only — a bare "VR" title is a separate product
+    /\s*[-:–—]\s*vr edition$/,
+    /\s+vr edition$/,
     /\s*[-:–—]\s*game of the yorha(?:\s+edition)?$/,
     /\s+game of the yorha(?:\s+edition)?$/,
   ];
@@ -116,6 +109,11 @@ export function stripEditionSuffix(title: string): string | null {
     if (next.length >= 4 && next !== n) return next;
   }
   return null;
+}
+
+export function sumNullable(a: number | null, b: number | null): number | null {
+  if (a == null && b == null) return null;
+  return (a ?? 0) + (b ?? 0);
 }
 
 function maxNullable(a: number | null, b: number | null): number | null {
@@ -139,13 +137,14 @@ function preferShelfRow(a: ValuationGame, b: ValuationGame): ValuationGame {
   return rowScore(a) >= rowScore(b) ? a : b;
 }
 
-function mergeEditionIntoBase(
+export function mergeEditionIntoBase(
   base: ValuationGame,
   edition: ValuationGame,
 ): ValuationGame {
   // Edition / remaster / standard SKUs are the same effective game — never sum
-  // live prices. Paid is max so one wallet line isn’t double-counted.
-  const paid = maxNullable(base.paid, edition.paid);
+  // live prices. Paid IS summed: the valuation puts each purchase line on
+  // exactly one row, so two rows with paid are two real purchases.
+  const paid = sumNullable(base.paid, edition.paid);
   // Shelf now / lowest: one effective market price (remaster when both owned)
   const survivor = preferShelfRow(base, edition);
   const other = survivor === base ? edition : base;
@@ -206,6 +205,7 @@ function mergeEditionIntoBase(
         ? "Remaster / edition folded (original not double-counted)"
         : undefined),
     giftedFrom: survivor.giftedFrom ?? other.giftedFrom,
+    receivedAt: survivor.receivedAt ?? other.receivedAt,
     giftedTo: survivor.giftedTo ?? other.giftedTo,
   };
 }
@@ -222,32 +222,16 @@ function findBaseInList(
     );
     if (exact) return exact;
 
-    // Soft: base key matches another library title (trademark / punctuation drift)
+    // Soft: the base key is another library title bar edition noise
+    // (trademark / punctuation drift). A shared prefix is not enough:
+    // "doom eternal" is not DOOM, "tomb raider" is not Tomb Raider: Anniversary.
     let best: ValuationGame | null = null;
     for (const g of games) {
       if (g === edition) continue;
       const t = norm(g.title);
       if (t.length < 4) continue;
-      if (
-        baseKey === t ||
-        baseKey.startsWith(`${t}:`) ||
-        baseKey.startsWith(`${t} `) ||
-        t.startsWith(`${baseKey} `) ||
-        t.startsWith(`${baseKey}:`)
-      ) {
-        // Don't treat sequels as the same game ("bioshock 2" vs "bioshock")
-        const restFromBase = t.startsWith(baseKey)
-          ? t.slice(baseKey.length).trim()
-          : "";
-        const restFromT = baseKey.startsWith(t)
-          ? baseKey.slice(t.length).trim()
-          : "";
-        const sequelRest = (r: string) =>
-          /^(i{1,3}|iv|vi{0,3}|ix|\d+)\b/i.test(r.replace(/^[\s:–—-]+/, ""));
-        if (sequelRest(restFromBase) || sequelRest(restFromT)) continue;
-
-        if (!best || t.length > norm(best.title).length) best = g;
-      }
+      if (!titlesSoftMatch(baseKey, t)) continue;
+      if (!best || t.length > norm(best.title).length) best = g;
     }
     if (best) return best;
   }
@@ -283,11 +267,12 @@ export function foldEditionPacksIntoBase(
 ): ValuationGame[] {
   const remaining = [...games];
   let changed = true;
-  let guard = 0;
+  // One merge per pass, and every merge removes a row → at most length passes
+  let guard = games.length;
 
-  while (changed && guard < 12) {
+  while (changed && guard > 0) {
     changed = false;
-    guard += 1;
+    guard -= 1;
     for (let i = 0; i < remaining.length; i++) {
       const edition = remaining[i]!;
       if (isBundleTitle(edition.title)) continue;

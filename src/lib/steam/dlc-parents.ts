@@ -2,9 +2,10 @@
  * Resolve Steam DLC → base-game app IDs (store appdetails fullgame).
  * Cached under data/ so dashboard builds stay cheap.
  */
-import fs from "node:fs/promises";
 import { mapPool, steamRateLimiter } from "@/lib/async/pool";
+import { readJsonFile, updateJsonFile } from "@/lib/data/json-store";
 import { dataPath, ensureDataDir } from "@/lib/data/load-local";
+import { isOffline, netFetch } from "@/lib/runtime";
 
 export type DlcParentCache = {
   updatedAt: string;
@@ -20,19 +21,39 @@ const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const DLC_CONCURRENCY = 4;
 const CHECKPOINT_EVERY = 20;
 
+/** Missing file → empty cache; unreadable / corrupt file → throws. */
 async function loadCache(): Promise<DlcParentCache> {
-  await ensureDataDir();
-  try {
-    const raw = await fs.readFile(dataPath(CACHE_FILE), "utf8");
-    return JSON.parse(raw) as DlcParentCache;
-  } catch {
-    return { updatedAt: "", parents: {}, notDlc: [] };
-  }
+  const parsed = await readJsonFile<DlcParentCache>(dataPath(CACHE_FILE));
+  return {
+    updatedAt: parsed?.updatedAt ?? "",
+    parents: parsed?.parents ?? {},
+    notDlc: Array.isArray(parsed?.notDlc) ? parsed.notDlc : [],
+  };
 }
 
+/**
+ * Keep answers another process stored since we loaded. Our own verdict for an
+ * app wins: a disk "parent" is not resurrected for an app we just found is
+ * not DLC, and vice versa.
+ */
+function mergeDlcCaches(mine: DlcParentCache, disk: DlcParentCache): DlcParentCache {
+  const notDlc = new Set(mine.notDlc);
+  for (const [id, parent] of Object.entries(disk.parents ?? {})) {
+    if (mine.parents[id] == null && !notDlc.has(id)) mine.parents[id] = parent;
+  }
+  for (const id of disk.notDlc ?? []) {
+    if (mine.parents[id] == null) notDlc.add(id);
+  }
+  mine.notDlc = [...notDlc];
+  return mine;
+}
+
+/** Atomic, locked, merged with what is on disk. Throws if the file is corrupt. */
 async function saveCache(cache: DlcParentCache) {
   await ensureDataDir();
-  await fs.writeFile(dataPath(CACHE_FILE), JSON.stringify(cache, null, 2));
+  await updateJsonFile<DlcParentCache>(dataPath(CACHE_FILE), (disk) =>
+    disk ? mergeDlcCaches(cache, disk) : cache,
+  );
 }
 
 type AppDetailsEntry = {
@@ -47,7 +68,7 @@ async function fetchOne(appId: number): Promise<AppDetailsEntry | null> {
   const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&filters=basic`;
   return steamRateLimiter.schedule(async () => {
     try {
-      const res = await fetch(url, {
+      const res = await netFetch(url, {
         headers: { "User-Agent": UA, Accept: "application/json" },
         cache: "no-store",
       });
@@ -61,9 +82,38 @@ async function fetchOne(appId: number): Promise<AppDetailsEntry | null> {
   });
 }
 
+function parentsFor(
+  cache: DlcParentCache,
+  appIds: number[],
+): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const id of appIds) {
+    const parent = cache.parents[String(id)];
+    if (parent != null && parent !== id) out.set(id, parent);
+  }
+  return out;
+}
+
+/**
+ * Cache read only — no network, no write. This is what the request path uses;
+ * `resolveDlcParents` (network + write) runs from scripts/refresh-prices.ts.
+ */
+export async function readDlcParents(
+  appIds: number[],
+): Promise<Map<number, number>> {
+  try {
+    return parentsFor(await loadCache(), appIds);
+  } catch (err) {
+    // Regenerable cache on the request path: degrade to "no DLC folding"
+    // rather than fail the dashboard. The write path stays strict.
+    console.warn(err instanceof Error ? err.message : err);
+    return new Map();
+  }
+}
+
 /**
  * Returns map of DLC appId → parent base-game appId.
- * Non-DLC apps are omitted.
+ * Non-DLC apps are omitted. Hits the Steam store and writes the cache.
  */
 export async function resolveDlcParents(
   appIds: number[],
@@ -86,6 +136,9 @@ export async function resolveDlcParents(
     need.push(id);
   }
 
+  // Offline (or nothing to resolve): answer from the cache, write nothing.
+  if (isOffline() || need.length === 0) return parentsFor(cache, unique);
+
   let completed = 0;
   await mapPool(need, DLC_CONCURRENCY, async (id) => {
     const key = String(id);
@@ -100,11 +153,14 @@ export async function resolveDlcParents(
     if (entry?.success && type === "dlc" && Number.isFinite(parent) && parent > 0) {
       cache.parents[key] = parent;
       notDlc.delete(key);
-    } else if (entry?.success) {
+    } else if (entry != null && typeof entry.success === "boolean") {
+      // `success: true` and not DLC, or `success: false` (delisted / region
+      // locked / not an app). Both are definitive answers from the store, so
+      // negative-cache them; they are re-checked once the cache goes stale.
       delete cache.parents[key];
       notDlc.add(key);
     }
-    // leave unknown on network failure so we retry next build
+    // entry == null → network / HTTP failure: leave unknown and retry next run
 
     completed += 1;
     if (completed % CHECKPOINT_EVERY === 0) {
@@ -118,10 +174,5 @@ export async function resolveDlcParents(
   cache.updatedAt = new Date().toISOString();
   await saveCache(cache);
 
-  const out = new Map<number, number>();
-  for (const id of unique) {
-    const parent = cache.parents[String(id)];
-    if (parent != null && parent !== id) out.set(id, parent);
-  }
-  return out;
+  return parentsFor(cache, unique);
 }

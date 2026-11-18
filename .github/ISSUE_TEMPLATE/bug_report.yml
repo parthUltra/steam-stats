@@ -1,0 +1,101 @@
+name: Bug report
+description: Something fails, or a number on the dashboard is wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste or attach your own data.** Issues are public. Leave out:
+
+        - Account Data pages or anything from `samples/`
+        - Purchase history, transaction ids, payment methods
+        - Anything from `.steam-session/` or `.gmail-session/`, cookies, tokens
+        - API keys, the contents of `.env.local` or `data/itad-credentials.json`
+        - Your Steam ID, profile URL, or friends' names
+        - Screenshots of your own dashboard
+
+        If you can, reproduce with the synthetic fixture and describe that instead:
+
+        ```bash
+        node tests/prepare-root.mjs
+        STEAM_STATS_ROOT=.test-root STEAM_STATS_OFFLINE=1 npm run dev
+        ```
+
+        Security problems do not belong here. See SECURITY.md.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Which command or gate fails?
+      options:
+        - npm run launch
+        - npm run fetch:account-data
+        - npm run parse:account-data
+        - npm run fetch:owned-games
+        - npm run fetch:transactions
+        - npm run refresh:prices
+        - npm run sync:gifts-gmail
+        - npm run dev / npm start (the dashboard itself)
+        - npm run typecheck
+        - npm run lint
+        - npm run test:unit
+        - npm run test:integration
+        - npm run test:security
+        - npm run test:e2e
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The error text or the wrong behavior. Remove names, ids and amounts that identify you.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Against the synthetic fixture if possible. For a parsing bug, a small made-up HTML snippet with the same structure is ideal.
+      placeholder: |
+        1. node tests/prepare-root.mjs
+        2. STEAM_STATS_ROOT=.test-root STEAM_STATS_OFFLINE=1 npm run dev
+        3. Open the Value tab and ...
+    validations:
+      required: true
+  - type: dropdown
+    id: fixture
+    attributes:
+      label: Does it reproduce with the synthetic fixture?
+      options:
+        - "Yes"
+        - "No, only with my own data"
+        - Not tried
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Output of `git rev-parse --short HEAD`
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Node.js version and operating system
+      placeholder: Node 22.11, macOS 15
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you submit
+      options:
+        - label: This report contains no Account Data, purchase history, session files, cookies, keys or personal identifiers.
+          required: true
