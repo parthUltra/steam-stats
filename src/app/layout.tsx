@@ -48,6 +48,9 @@ const jetbrains = localFont({
 export const metadata: Metadata = {
   title: "Steam Stats",
   description: "Local Steam spending habits and library valuation",
+  // The app is always dark. Dark-mode extensions such as Dark Reader would
+  // otherwise rewrite its colours and attributes before React hydrates.
+  other: { "darkreader-lock": "true" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
